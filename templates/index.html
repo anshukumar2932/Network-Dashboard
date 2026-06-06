@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Network Monitoring Dashboard</title>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+<style>
+
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
+
+body{
+    height:100vh;
+    overflow:hidden;
+    background:#f5f8fc;
+    font-family:'Segoe UI',sans-serif;
+    display:flex;
+}
+
+/* ==========================
+   LEFT TOPOLOGY AREA
+========================== */
+
+.topology-side{
+    flex:1;
+    position:relative;
+    overflow:hidden;
+}
+
+#network{
+    width:100%;
+    height:100%;
+    display:block;
+}
+
+/* Branding */
+
+.brand{
+    position:absolute;
+    top:60px;
+    left:60px;
+    z-index:10;
+}
+
+.brand h1{
+    font-size:42px;
+    font-weight:700;
+    color:#0f172a;
+    margin-bottom:10px;
+}
+
+.brand p{
+    color:#64748b;
+    font-size:16px;
+    max-width:500px;
+}
+
+/* ==========================
+   LOGIN AREA
+========================== */
+
+.login-side{
+    width:500px;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    padding:50px;
+}
+
+.login-card{
+
+    width:100%;
+    max-width:400px;
+
+    background:white;
+
+    border-radius:24px;
+
+    padding:40px;
+
+    border:1px solid #e2e8f0;
+
+    box-shadow:
+    0 20px 60px rgba(0,0,0,.08);
+
+    transition:.4s;
+}
+
+.login-card.scan{
+
+    box-shadow:
+    0 0 30px rgba(13,110,253,.25),
+    0 0 70px rgba(13,110,253,.15);
+
+    border-color:#0d6efd;
+}
+
+.card-title{
+    font-size:28px;
+    font-weight:700;
+    color:#0f172a;
+}
+
+.card-subtitle{
+    color:#64748b;
+    margin-bottom:30px;
+}
+
+.form-control{
+
+    height:52px;
+    border-radius:12px;
+    border:1px solid #dbe2ea;
+}
+
+.form-control:focus{
+    box-shadow:none;
+    border-color:#0d6efd;
+}
+
+/* Password */
+
+.password-wrapper{
+    position:relative;
+}
+
+.password-toggle{
+
+    position:absolute;
+    right:15px;
+    top:50%;
+    transform:translateY(-50%);
+
+    border:none;
+    background:none;
+
+    font-size:18px;
+    cursor:pointer;
+}
+
+/* Button */
+
+.btn-login{
+
+    width:100%;
+    height:52px;
+
+    border:none;
+
+    border-radius:12px;
+
+    background:#0d6efd;
+    color:white;
+
+    font-weight:600;
+
+    transition:.3s;
+}
+
+.btn-login:hover{
+    transform:translateY(-2px);
+}
+
+.footer{
+
+    margin-top:25px;
+
+    text-align:center;
+
+    color:#94a3b8;
+
+    font-size:13px;
+}
+
+/* Flash Message */
+
+.alert{
+    border-radius:12px;
+}
+
+/* Responsive */
+
+@media(max-width:900px){
+
+    .topology-side{
+        display:none;
+    }
+
+    .login-side{
+        width:100%;
+    }
+}
+
+</style>
+
+</head>
+
+<body>
+
+<!-- TOPOLOGY -->
+
+<div class="topology-side">
+
+    <canvas id="network"></canvas>
+
+    <div class="brand">
+
+        <h1>Network Monitor</h1>
+
+        <p>
+            Real-Time Wireless Topology &
+            Monitoring Dashboard
+        </p>
+
+    </div>
+
+</div>
+
+<!-- LOGIN -->
+
+<div class="login-side">
+
+    <div class="login-card" id="loginCard">
+
+        <div class="card-title">
+            Welcome Back
+        </div>
+
+        <div class="card-subtitle">
+            Sign in to continue
+        </div>
+
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        {% for msg in messages %}
+        <div class="alert alert-danger">
+            {{ msg }}
+        </div>
+        {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        <form method="POST">
+
+            <div class="mb-3">
+
+                <input
+                type="text"
+                name="user"
+                class="form-control"
+                placeholder="Username"
+                required>
+
+            </div>
+
+            <div class="mb-3 password-wrapper">
+
+                <input
+                type="password"
+                name="passwd"
+                id="password"
+                class="form-control"
+                placeholder="Password"
+                required>
+
+                <button
+                type="button"
+                class="password-toggle"
+                id="togglePassword">
+
+                    👁
+
+                </button>
+
+            </div>
+
+            <div class="mb-2">
+
+                <div class="captcha-box">
+                    {{ captcha }}
+                </div>
+
+            </div>
+
+            <div class="mb-4">
+
+                <input
+                type="text"
+                name="captcha"
+                class="form-control"
+                placeholder="Captcha">
+
+            </div>
+
+            <button
+            type="submit"
+            class="btn-login">
+
+                LOGIN
+
+            </button>
+
+        </form>
+
+        <div class="footer">
+            Wireless Monitoring System
+        </div>
+
+    </div>
+
+</div>
+
+<script>
+
+/* ==========================
+   PASSWORD TOGGLE
+========================== */
+
+const password =
+document.getElementById("password");
+
+const toggle =
+document.getElementById("togglePassword");
+
+const card =
+document.getElementById("loginCard");
+
+let turbo = false;
+
+toggle.addEventListener("click",()=>{
+
+    if(password.type==="password"){
+
+        password.type="text";
+
+        toggle.innerHTML="︶";
+
+        turbo=true;
+
+        card.classList.add("scan");
+
+    }
+    else{
+
+        password.type="password";
+
+        toggle.innerHTML="👁";
+
+        turbo=false;
+
+        card.classList.remove("scan");
+    }
+});
+
+/* ==========================
+   NETWORK TOPOLOGY
+========================== */
+
+const canvas =
+document.getElementById("network");
+
+const ctx =
+canvas.getContext("2d");
+
+function resize(){
+
+    canvas.width =
+    canvas.offsetWidth;
+
+    canvas.height =
+    canvas.offsetHeight;
+}
+
+resize();
+
+window.addEventListener(
+"resize",
+resize
+);
+
+const mouse = {
+    x:null,
+    y:null
+};
+
+window.addEventListener(
+"mousemove",
+(e)=>{
+
+    mouse.x=e.clientX;
+    mouse.y=e.clientY;
+}
+);
+
+const nodes=[];
+
+for(let i=0;i<70;i++){
+
+    nodes.push({
+
+        x:Math.random()*canvas.width,
+        y:Math.random()*canvas.height,
+
+        vx:(Math.random()-0.5)*0.5,
+        vy:(Math.random()-0.5)*0.5
+
+    });
+}
+
+function animate(){
+
+    ctx.clearRect(
+    0,
+    0,
+    canvas.width,
+    canvas.height
+    );
+
+    for(let i=0;i<nodes.length;i++){
+
+        let a=nodes[i];
+
+        a.x+=a.vx;
+        a.y+=a.vy;
+
+        if(a.x<0 || a.x>canvas.width)
+            a.vx*=-1;
+
+        if(a.y<0 || a.y>canvas.height)
+            a.vy*=-1;
+
+        for(let j=i+1;j<nodes.length;j++){
+
+            let b=nodes[j];
+
+            let dx=a.x-b.x;
+            let dy=a.y-b.y;
+
+            let dist=Math.sqrt(
+            dx*dx+dy*dy
+            );
+
+            if(dist<150){
+
+                ctx.beginPath();
+
+                ctx.strokeStyle=
+                turbo
+                ? "rgba(13,110,253,.35)"
+                : "rgba(148,163,184,.25)";
+
+                ctx.moveTo(a.x,a.y);
+                ctx.lineTo(b.x,b.y);
+
+                ctx.stroke();
+            }
+        }
+
+        let mdx=a.x-mouse.x;
+        let mdy=a.y-mouse.y;
+
+        let md=Math.sqrt(
+        mdx*mdx+mdy*mdy
+        );
+
+        ctx.beginPath();
+
+        ctx.arc(
+            a.x,
+            a.y,
+            turbo ? 4 : 3,
+            0,
+            Math.PI*2
+        );
+
+        ctx.fillStyle=
+        md<120
+        ? "#0d6efd"
+        : "#94a3b8";
+
+        ctx.fill();
+    }
+
+    requestAnimationFrame(
+    animate
+    );
+}
+
+animate();
+
+</script>
+
+</body>
+</html>
