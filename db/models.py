@@ -32,97 +32,38 @@ class Device(Base):
     last_seen: Mapped[datetime| None] = mapped_column(DateTime)
     site: Mapped["Site"] = relationship(back_populates="devices")
     ping_history: Mapped[list["PingHistory"]] = relationship(back_populates="device",cascade="all, delete-orphan")
-    links_as_a: Mapped[list["Link"]] = relationship(
-        foreign_keys="Link.device_a",
-        back_populates="device_a_ref",
-    )
-
-    links_as_b: Mapped[list["Link"]] = relationship(
-        foreign_keys="Link.device_b",
-        back_populates="device_b_ref",
-    )
+    links_a: Mapped[list["Link"]] = relationship(foreign_keys="Link.device_a",back_populates="device_a_ref")
+    links_b: Mapped[list["Link"]] = relationship(foreign_keys="Link.device_b",back_populates="device_b_ref",)
     
 class Link(Base):
     __tablename__ = "links"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-
-    source_site: Mapped[int] = mapped_column(
-        ForeignKey("sites.id"),
-        nullable=False,
-    )
-
-    destination_site: Mapped[int] = mapped_column(
-        ForeignKey("sites.id"),
-        nullable=False,
-    )
-
-    device_a: Mapped[int | None] = mapped_column(
-        ForeignKey("devices.id")
-    )
-
-    device_b: Mapped[int | None] = mapped_column(
-        ForeignKey("devices.id")
-    )
-
-    source: Mapped["Site"] = relationship(
-        foreign_keys=[source_site],
-        back_populates="source_link",
-    )
-
-    destination: Mapped["Site"] = relationship(
-        foreign_keys=[destination_site],
-        back_populates="destination_link",
-    )
-
-    device_a_ref: Mapped["Device | None"] = relationship(
-        foreign_keys=[device_a],
-        back_populates="links_as_a",
-    )
-
-    device_b_ref: Mapped["Device | None"] = relationship(
-        foreign_keys=[device_b],
-        back_populates="links_as_b",
-    )
+    source_site: Mapped[int] = mapped_column(ForeignKey("sites.id"),nullable=False,)
+    destination_site: Mapped[int] = mapped_column(ForeignKey("sites.id"),nullable=False)
+    device_a: Mapped[int | None] = mapped_column(ForeignKey("devices.id"))
+    device_b: Mapped[int | None] = mapped_column(ForeignKey("devices.id"))
+    source: Mapped["Site"] = relationship(foreign_keys=[source_site],back_populates="source_link")
+    destination: Mapped["Site"] = relationship(foreign_keys=[destination_site],back_populates="destination_link")
+    device_a_ref: Mapped["Device | None"] = relationship(foreign_keys=[device_a],back_populates="links_a")
+    device_b_ref: Mapped["Device | None"] = relationship(foreign_keys=[device_b],back_populates="links_b",)
 
 
 class PingHistory(Base):
     __tablename__ = "ping_history"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-
-    device_id: Mapped[int | None] = mapped_column(
-        ForeignKey("devices.id")
-    )
-
+    device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"))
     ping_time: Mapped[datetime | None] = mapped_column(DateTime)
-
     latency_ms: Mapped[float | None] = mapped_column(Float)
-
     status: Mapped[bool] = mapped_column(BOOLEAN, nullable=False, default=True)
-
-    device: Mapped["Device | None"] = relationship(
-        back_populates="ping_history"
-    )
+    device: Mapped["Device | None"] = relationship(back_populates="ping_history")
 
 class Alert(Base):
     __tablename__ = "alerts"
-
     id: Mapped[int] = mapped_column(primary_key=True)
-
-    device_id: Mapped[int] = mapped_column(
-        ForeignKey("devices.id")
-    )
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.utcnow
-    )
-
-    resolved: Mapped[bool] = mapped_column(
-        BOOLEAN,
-        default=False
-    )
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"))
+    link_id: Mapped[int] = mapped_column(ForeignKey("links.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime,default=datetime.utcnow)
+    resolved: Mapped[bool] = mapped_column(BOOLEAN,default=False)
 
 
 
