@@ -54,7 +54,7 @@ def send_alert_down(devices):
     for device in devices:
         rows += f"""
         <tr>
-            <td>{device.name}</td>
+            <td>{device.hostname}</td>
             <td>{device.ip}</td>
         </tr>
         """
@@ -88,7 +88,7 @@ def send_alert_up(devices):
     for device in devices:
         rows += f"""
         <tr>
-            <td>{device.name}</td>
+            <td>{device.hostname}</td>
             <td>{device.ip}</td>
         </tr>
         """
