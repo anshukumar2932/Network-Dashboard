@@ -246,7 +246,7 @@ body{
         {% endfor %}
         {% endif %}
         {% endwith %}
-
+        <script>setTimeout(function(){document.querySelectorAll('.alert').forEach(function(e){e.style.transition='opacity 0.5s';e.style.opacity='0';setTimeout(function(){e.remove()},500)})},4000)</script>
         <form method="POST">
 
             <div class="mb-3">

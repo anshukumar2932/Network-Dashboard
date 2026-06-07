@@ -2,6 +2,7 @@ from sqlalchemy.orm import sessionmaker, selectinload
 from db.models import engine,User,Link,Device,Site,Location,TopologyNode
 from werkzeug.security import generate_password_hash, check_password_hash    
 from sqlalchemy import select,func
+from datetime import timezone
 import time as _time
 
 SessionLocal = sessionmaker(
@@ -54,55 +55,6 @@ def device_status(category):
     finally:
         session.close()
 
-def topology_data():
-    session = SessionLocal()
-
-    try:
-        nodes=[]
-        edges=[]
-        devices=session.query(Device).all()
-        for device in devices:
-            nodes.append({
-                                "data": {
-                    "id": str(device.id),
-                    "label": device.hostname,
-                    "ip": device.ip,
-                    "status": device.status,
-                    "category": device.category,
-                    "site": device.site.name,
-                    "location": device.site.location.name
-                }
-            })
-        
-        links = session.query(Link).all()
-        for link in links:
-            if not link.device_a or not link.device_b:
-                continue
-            edges.append({
-                "data": {
-                    "id": str(link.id),
-                    "source": str(link.device_a),
-                    "target": str(link.device_b),
-                    "status": link.status
-                }
-            })
-        return {"nodes":nodes,"edges":edges}
-    finally:
-        session.close()
-
-def device_working_graph_data():
-    session=SessionLocal()
-    result=dict()
-    try:
-        categories=session.scalars(select(Device.category).distinct()).all()
-        for category in categories:
-            total=session.query(func.count(Device.id)).filter(Device.category==category).scalar()
-            working=session.query(func.count(Device.id)).filter(Device.category==category,Device.status==True).scalar()
-            result[category]={"total":total,"working":working}
-        return result
-    finally:
-        session.close()
-
 def radio_down():
     session=SessionLocal()
     try:
@@ -112,20 +64,22 @@ def radio_down():
         session.close()
 
 def location_data(id):
-
     session=SessionLocal()
     try:
-        sites=session.scalars(select(Site).filter(Site.location_id==id)).all()
-        return sites
+        sites=session.query(Site).options(
+            selectinload(Site.location)
+        ).filter(Site.location_id==id).all()
+        return [{"id": s.id, "name": s.name, "location": {"id": s.location.id, "name": s.location.name} if s.location else None} for s in sites]
     finally:
         session.close()
 
 def site_data(id):
-
     session=SessionLocal()
     try:
-        sites=session.scalars(select(Site).filter(Site.id==id)).all()
-        return sites
+        sites=session.query(Site).options(
+            selectinload(Site.location)
+        ).filter(Site.id==id).all()
+        return [{"id": s.id, "name": s.name, "location": {"id": s.location.id, "name": s.location.name} if s.location else None} for s in sites]
     finally:
         session.close()
 
@@ -243,7 +197,6 @@ def location_topology():
 
         loc_nodes = []
         loc_count = len(locations)
-        start_x = -(loc_count - 1) * 50.0
         for idx, loc in enumerate(locations):
             total = 0
             down = 0
@@ -271,7 +224,7 @@ def location_topology():
                     "down_count": down,
                     "site_count": len(loc.sites)
                 },
-                "position": {"x": start_x + idx * 100.0, "y": 0.0}
+                "position": {"x": float(idx * 2000), "y": 0.0}
             })
 
         # Collapsed inter-location edges with link counts
@@ -327,6 +280,7 @@ def location_sites(location_id):
         sites = session.query(Site).options(
             selectinload(Site.devices)
         ).filter(Site.location_id == location_id).all()
+        positions = get_topology_positions()
 
         site_nodes = []
         for site in sites:
@@ -340,7 +294,8 @@ def location_sites(location_id):
                 status = "YELLOW"
             else:
                 status = "GREEN"
-            site_nodes.append({
+            pos = positions.get(site.id)
+            node = {
                 "data": {
                     "id": f"site-{site.id}",
                     "label": site.name,
@@ -350,7 +305,10 @@ def location_sites(location_id):
                     "device_count": total,
                     "down_count": down
                 }
-            })
+            }
+            if pos:
+                node["position"] = {"x": pos["x"], "y": pos["y"]}
+            site_nodes.append(node)
 
         # All links where source OR dest is in this location
         site_ids = [s.id for s in sites]
@@ -409,8 +367,20 @@ def site_devices(site_id):
     session = SessionLocal()
     try:
         devices = session.query(Device).filter(Device.site_id == site_id).all()
+        site_pos = session.query(TopologyNode).filter(
+            TopologyNode.site_id == site_id
+        ).first()
+        base_x = site_pos.x_percent if site_pos else 0.0
+        base_y = site_pos.y_percent if site_pos else 0.0
+
+        dev_count = len(devices)
+        cols = max(1, DEVICE_COLS)
         nodes = []
-        for d in devices:
+        for i, d in enumerate(devices):
+            row = i // cols
+            col = i % cols
+            x = base_x + col * DEVICE_SPACING_X - (min(dev_count, cols) - 1) * DEVICE_SPACING_X / 2
+            y = base_y + 50 + row * DEVICE_SPACING_Y
             nodes.append({
                 "data": {
                     "id": f"device-{d.id}",
@@ -421,7 +391,8 @@ def site_devices(site_id):
                     "model": d.model,
                     "category": d.category,
                     "site_id": site_id
-                }
+                },
+                "position": {"x": float(x), "y": float(y)}
             })
         elapsed = _time.perf_counter() - t0
         print(f"[DB] site_devices({site_id}) -> {len(nodes)} devices ({elapsed:.3f}s)")
@@ -708,12 +679,33 @@ def delete_device(device_id):
     finally:
         session.close()
 
-def get_details_paginated(page=1, per_page=20):
+def get_details_paginated(page=1, per_page=20, sort_by="id", sort_dir="asc"):
     session=SessionLocal()
     try:
-        total=session.query(Device).count()
-        offset=(page-1)*per_page
-        devices=session.query(Device).order_by(Device.id).offset(offset).limit(per_page).all()
+        q = session.query(Device).options(
+            selectinload(Device.site).selectinload(Site.location)
+        )
+        total = q.count()
+        sort_map = {
+            "location": Site.location_id,
+            "site": Site.name,
+            "hostname": Device.hostname,
+            "ip": Device.ip,
+            "model": Device.model,
+            "category": Device.category,
+            "status": Device.status,
+        }
+        col = sort_map.get(sort_by, Device.id)
+        if sort_dir == "desc":
+            col = col.desc()
+        else:
+            col = col.asc()
+        if sort_by in ("location", "site"):
+            q = q.join(Site)
+            col = sort_map[sort_by]
+            if sort_dir == "desc":
+                col = col.desc()
+        devices = q.order_by(col, Device.id).offset((page-1)*per_page).limit(per_page).all()
         rows=[]
         for d in devices:
             rows.append({
@@ -758,7 +750,162 @@ def add_devices_bulk(devices_data):
         session.close()
     return added, errors
 
+def all_devices_status():
+    session = SessionLocal()
+    try:
+        devices = session.query(Device).options(
+            selectinload(Device.site).selectinload(Site.location)
+        ).all()
+        result = []
+        for device in devices:
+            last_seen_str = device.last_seen.strftime("%Y-%m-%d %H:%M:%S") if device.last_seen else None
+            result.append({
+                "id": str(device.id),
+                "label": device.hostname,
+                "ip": device.ip,
+                "status": device.status,
+                "category": device.category,
+                "site": device.site.name,
+                "location": device.site.location.name,
+                "last_seen": last_seen_str
+            })
+        return result
+    finally:
+        session.close()
+
 import json
+import math
+
+LOCATION_GRID_X = 0
+SITE_SPACING_X = 280
+SITE_SPACING_Y = 200
+SITE_COLS = 4
+DEVICE_SPACING_X = 120
+DEVICE_SPACING_Y = 80
+DEVICE_COLS = 5
+
+def generate_grid_positions():
+    t0 = _time.perf_counter()
+    print("[DB] generate_grid_positions()")
+    session = SessionLocal()
+    try:
+        locations = session.query(Location).order_by(Location.id).all()
+        count = 0
+        for loc_idx, loc in enumerate(locations):
+            loc_x = loc_idx * 2000
+            sites = session.query(Site).filter(
+                Site.location_id == loc.id
+            ).order_by(Site.name).all()
+            for idx, site in enumerate(sites):
+                row = idx // SITE_COLS
+                col = idx % SITE_COLS
+                x = loc_x + col * SITE_SPACING_X
+                y = row * SITE_SPACING_Y
+                existing = session.query(TopologyNode).filter(
+                    TopologyNode.site_id == site.id
+                ).first()
+                if existing:
+                    existing.x_percent = float(x)
+                    existing.y_percent = float(y)
+                else:
+                    node = TopologyNode(
+                        site_id=site.id,
+                        x_percent=float(x),
+                        y_percent=float(y)
+                    )
+                    session.add(node)
+                count += 1
+        session.commit()
+        elapsed = _time.perf_counter() - t0
+        print(f"[DB] generate_grid_positions() -> {count} positions set ({elapsed:.3f}s)")
+        return {"ok": True, "count": count}
+    except Exception as e:
+        session.rollback()
+        print(f"[DB] generate_grid_positions() -> error: {e}")
+        return {"ok": False, "error": str(e)}
+    finally:
+        session.close()
+
+def build_heartbeat_paths():
+    t0 = _time.perf_counter()
+    print("[DB] build_heartbeat_paths()")
+    session = SessionLocal()
+    try:
+        links = session.query(Link).options(
+            selectinload(Link.source),
+            selectinload(Link.destination),
+            selectinload(Link.device_a_ref),
+            selectinload(Link.device_b_ref)
+        ).filter(Link.status == True).all()
+
+        link_map = {}
+        for link in links:
+            if link.device_a_ref and link.device_b_ref:
+                a_id = f"device-{link.device_a_ref.id}"
+                b_id = f"device-{link.device_b_ref.id}"
+                link_id = f"link-{link.id}"
+                link_map.setdefault(a_id, []).append({
+                    "target": b_id,
+                    "link_id": link_id,
+                    "status": link.status,
+                    "source_site": link.source_site,
+                    "destination_site": link.destination_site
+                })
+                link_map.setdefault(b_id, []).append({
+                    "target": a_id,
+                    "link_id": link_id,
+                    "status": link.status,
+                    "source_site": link.destination_site,
+                    "destination_site": link.source_site
+                })
+
+        paths = []
+        used_devices = set()
+        for link in links[:20]:
+            if not link.device_a_ref or not link.device_b_ref:
+                continue
+            start = f"device-{link.device_a_ref.id}"
+            if start in used_devices:
+                continue
+            path_devices = [start]
+            path_links = [f"link-{link.id}"]
+            current = f"device-{link.device_b_ref.id}"
+            path_devices.append(current)
+            used_devices.add(start)
+
+            max_hops = 8
+            for _ in range(max_hops):
+                neighbors = link_map.get(current, [])
+                found = False
+                for nb in neighbors:
+                    if nb["target"] not in path_devices:
+                        path_devices.append(nb["target"])
+                        path_links.append(nb["link_id"])
+                        current = nb["target"]
+                        found = True
+                        break
+                if not found:
+                    break
+
+            if len(path_devices) >= 2:
+                paths.append({
+                    "id": f"path-{len(paths)+1}",
+                    "name": f"{path_devices[0]} → {path_devices[-1]}",
+                    "source_device": path_devices[0],
+                    "destination_device": path_devices[-1],
+                    "route_devices": path_devices,
+                    "route_links": path_links
+                })
+
+        elapsed = _time.perf_counter() - t0
+        print(f"[DB] build_heartbeat_paths() -> {len(paths)} paths ({elapsed:.3f}s)")
+        return {"paths": paths}
+    finally:
+        session.close()
+
+def topology_paths():
+    return build_heartbeat_paths()
+
 
 def cache_topology(key, data):
     from db.models import TopologyCache
@@ -769,7 +916,7 @@ def cache_topology(key, data):
         serialized = json.dumps(data)
         if existing:
             existing.data = serialized
-            existing.created_at = datetime.utcnow()
+            existing.created_at = datetime.now(timezone.utc).replace(tzinfo=None)
         else:
             entry = TopologyCache(key=key, data=serialized)
             session.add(entry)
@@ -784,7 +931,7 @@ def get_cached_topology(key, ttl=10):
     session = SessionLocal()
     try:
         existing = session.query(TopologyCache).filter(TopologyCache.key == key).first()
-        if existing and (datetime.utcnow() - existing.created_at).total_seconds() < ttl:
+        if existing and (datetime.now(timezone.utc).replace(tzinfo=None) - existing.created_at).total_seconds() < ttl:
             print(f"[DB] get_cached_topology({key}) -> cache HIT")
             return json.loads(existing.data)
         print(f"[DB] get_cached_topology({key}) -> cache MISS/EXPIRED")

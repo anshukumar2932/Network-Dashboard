@@ -2,10 +2,13 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-from db.models import *
+from db.models import Base, engine, User, Location, Site, Device, Link
+from sqlalchemy.orm import selectinload
 from monitor.monitor import check_device
-from db.database import SessionLocal, login,location_data,site_data,get_all_sites,get_all_locations,add_device,add_devices_bulk,full_topology,location_topology,location_sites,site_devices,add_location,add_site,save_topology_position,auto_place_site,update_location,delete_location,update_site,delete_site,get_all_devices,update_device,delete_device,get_details_paginated,device_status
-from flask import Flask,request, redirect, flash, render_template, session, jsonify, Response
+from db.database import SessionLocal, login,location_data,site_data,get_all_sites,get_all_locations,add_device,add_devices_bulk,full_topology,location_topology,location_sites,site_devices,add_location,add_site,save_topology_position,auto_place_site,update_location,delete_location,update_site,delete_site,get_all_devices,update_device,delete_device,get_details_paginated,device_status,all_devices_status,generate_grid_positions,topology_paths
+from flask import Flask,request, redirect, flash, render_template, session, jsonify, Response, send_file
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from flask_login import LoginManager, login_required, login_user, logout_user, current_user
 from extensions import socketio
 from monitor.scheduler import scheduler
@@ -27,6 +30,13 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "change_this_to_random_secret")
 socketio.init_app(app)
 
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://",
+)
+
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "/"
@@ -38,6 +48,12 @@ def load_user(user_id):
         return s.get(User, int(user_id))
     finally:
         s.close()
+
+@app.before_request
+def check_must_change_password():
+    if current_user.is_authenticated and current_user.must_change_password:
+        if request.endpoint not in ("change_password", "index", "captcha_image", "logout", "static"):
+            return redirect("/change-password")
 
 def create_default_admin():
     s = SessionLocal()
@@ -66,6 +82,7 @@ def captcha_image():
     return Response(buf.getvalue(), mimetype="image/png")
 
 @app.route("/", methods=["GET","POST"])
+@limiter.limit("10 per minute", methods=["POST"])
 def index():
     if request.method =="POST":
         user= request.form.get("user")
@@ -124,17 +141,13 @@ def change_password():
 @app.route("/dashboard")
 @login_required
 def dashboard():
-    if current_user.must_change_password:
-        return redirect("/change-password")
-    return render_template("radio.html")
+    return render_template("radio.html", active_page='dashboard')
 
 @app.route("/dashboard/radio",methods=['GET','POST'])
 @login_required
 def radio():
-    if current_user.must_change_password:
-        return redirect("/change-password")
     if request.method=="GET":
-        return render_template("radio.html")
+        return render_template("radio.html", active_page='dashboard')
     if request.method=="POST":
         location_id=request.form.get("location_id")
         site_id=request.form.get("site_id")
@@ -145,22 +158,16 @@ def radio():
 @app.route("/details/<int:location_id>")
 @login_required
 def location_detail(location_id):
-    if current_user.must_change_password:
-        return redirect("/change-password")
     return render_template('details.html',show='location',detail=location_data(location_id))
 
 @app.route("/details/<int:location_id>/<int:site_id>")
 @login_required
 def site_details(location_id,site_id):
-    if current_user.must_change_password:
-        return redirect("/change-password")
     return render_template('details.html',show='site',detail=site_data(site_id))
 
 @app.route("/locations", methods=["GET","POST"])
 @login_required
 def locations_route():
-    if current_user.must_change_password:
-        return redirect("/change-password")
     if request.method=="POST":
         name=request.form.get("name")
         loc_id=request.form.get("id")
@@ -183,22 +190,18 @@ def locations_route():
                 flash(f"Location '{name}' added")
         return redirect("/locations")
     locations=get_all_locations()
-    return render_template("locations.html", locations=locations, edit=None)
+    return render_template("locations.html", locations=locations, edit=None, active_page='locations')
 
 @app.route("/locations/edit/<int:loc_id>")
 @login_required
 def location_edit(loc_id):
-    if current_user.must_change_password:
-        return redirect("/change-password")
     locations=get_all_locations()
     edit=next((l for l in locations if l.id==loc_id), None)
-    return render_template("locations.html", locations=locations, edit=edit)
+    return render_template("locations.html", locations=locations, edit=edit, active_page='locations')
 
 @app.route("/locations/delete/<int:loc_id>")
 @login_required
 def location_delete(loc_id):
-    if current_user.must_change_password:
-        return redirect("/change-password")
     result=delete_location(loc_id)
     if isinstance(result, Exception):
         flash(f"Error: {result}")
@@ -209,8 +212,6 @@ def location_delete(loc_id):
 @app.route("/sites", methods=["GET","POST"])
 @login_required
 def sites_route():
-    if current_user.must_change_password:
-        return redirect("/change-password")
     if request.method=="POST":
         name=request.form.get("name")
         location_id=request.form.get("location_id")
@@ -236,23 +237,19 @@ def sites_route():
         return redirect("/sites")
     sites=get_all_sites()
     locations=get_all_locations()
-    return render_template("sites.html", sites=sites, locations=locations, edit=None)
+    return render_template("sites.html", sites=sites, locations=locations, edit=None, active_page='sites')
 
 @app.route("/sites/edit/<int:site_id>")
 @login_required
 def site_edit(site_id):
-    if current_user.must_change_password:
-        return redirect("/change-password")
     sites=get_all_sites()
     locations=get_all_locations()
     edit=next((s for s in sites if s.id==site_id), None)
-    return render_template("sites.html", sites=sites, locations=locations, edit=edit)
+    return render_template("sites.html", sites=sites, locations=locations, edit=edit, active_page='sites')
 
 @app.route("/sites/delete/<int:site_id>")
 @login_required
 def site_delete(site_id):
-    if current_user.must_change_password:
-        return redirect("/change-password")
     result=delete_site(site_id)
     if isinstance(result, Exception):
         flash(f"Error: {result}")
@@ -263,8 +260,6 @@ def site_delete(site_id):
 @app.route("/devices", methods=["GET","POST"])
 @login_required
 def devices_route():
-    if current_user.must_change_password:
-        return redirect("/change-password")
     edit_id=request.args.get("edit")
     if request.method=="POST":
         device_id=request.form.get("id")
@@ -294,13 +289,11 @@ def devices_route():
     edit=None
     if edit_id:
         edit=next((d for d in devices if str(d.id)==edit_id), None)
-    return render_template("devices.html", devices=devices, sites=sites, edit=edit)
+    return render_template("devices.html", devices=devices, sites=sites, edit=edit, active_page='devices')
 
 @app.route("/devices/delete/<int:device_id>")
 @login_required
 def device_delete(device_id):
-    if current_user.must_change_password:
-        return redirect("/change-password")
     result=delete_device(device_id)
     if isinstance(result, Exception):
         flash(f"Error: {result}")
@@ -308,11 +301,31 @@ def device_delete(device_id):
         flash("Device deleted")
     return redirect("/devices")
 
+@app.route("/devices/upload/template")
+@login_required
+def upload_devices_template():
+    import openpyxl
+    from io import BytesIO
+    wb=openpyxl.Workbook()
+    ws=wb.active
+    ws.title="Device Template"
+    headers=["Hostname","IP","Model","Category","Site Name"]
+    ws.append(headers)
+    ws.append(["example-router-01","10.0.0.1","Cisco ISR 4331","router","Main-Site"])
+    for col in range(1, len(headers)+1):
+        ws.column_dimensions[chr(64+col)].width=25
+        cell=ws.cell(row=1, column=col)
+        cell.font=openpyxl.styles.Font(bold=True, color="FFFFFF")
+        cell.fill=openpyxl.styles.PatternFill(start_color="0f172a", end_color="0f172a", fill_type="solid")
+        cell.alignment=openpyxl.styles.Alignment(horizontal="center")
+    bio=BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return send_file(bio, download_name="device_upload_template.xlsx", as_attachment=True, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
 @app.route("/devices/upload", methods=["GET","POST"])
 @login_required
 def upload_devices():
-    if current_user.must_change_password:
-        return redirect("/change-password")
     if request.method=="POST":
         file=request.files.get("file")
         if not file or file.filename=="":
@@ -323,17 +336,18 @@ def upload_devices():
             wb=openpyxl.load_workbook(file)
             ws=wb.active
             device_categories=["radio","ap","switch","router","server","other"]
+            s = SessionLocal()
+            try:
+                site_map = {site.name: site.id for site in s.query(Site).all()}
+            finally:
+                s.close()
             devices_data=[]
             for row in ws.iter_rows(min_row=2, values_only=True):
                 hostname, ip, model, category, site_name = row[:5]
                 if not hostname or not ip:
                     continue
-                s = SessionLocal()
-                try:
-                    site = s.query(Site).filter(Site.name == site_name).first()
-                finally:
-                    s.close()
-                if not site:
+                site_id = site_map.get(site_name)
+                if site_id is None:
                     flash(f"Site '{site_name}' not found, skipping {hostname}")
                     continue
                 cat=str(category).strip().lower() if category else "other"
@@ -344,7 +358,7 @@ def upload_devices():
                     "ip": str(ip).strip(),
                     "model": str(model).strip() if model else "",
                     "category": cat,
-                    "site_id": site.id
+                    "site_id": site_id
                 })
             if devices_data:
                 added, errors = add_devices_bulk(devices_data)
@@ -356,37 +370,28 @@ def upload_devices():
         except Exception as e:
             flash(f"Error processing file: {e}")
         return redirect("/devices/upload")
-    return render_template("upload_devices.html")
+    return render_template("upload_devices.html", active_page='upload')
 
 @app.route("/details/view")
 @login_required
 def details_view():
-    if current_user.must_change_password:
-        return redirect("/change-password")
     page=request.args.get("page", 1, type=int)
     per_page=request.args.get("per_page", 20, type=int)
-    rows, total = get_details_paginated(page, per_page)
+    sort_by=request.args.get("sort_by", "id")
+    sort_dir=request.args.get("sort_dir", "asc")
+    rows, total = get_details_paginated(page, per_page, sort_by, sort_dir)
     total_pages=max(1, (total+per_page-1)//per_page)
-    return render_template("details_view.html", rows=rows, page=page, total_pages=total_pages, total=total)
+    return render_template("details_view.html", rows=rows, page=page, per_page=per_page, total_pages=total_pages, total=total, sort_by=sort_by, sort_dir=sort_dir, active_page='details')
 
 @app.route("/api/alerts")
 def alerts_api():
-    all_downs=[]
-    for cat in ["radio","ap","switch","router","server","other"]:
-        devs=device_status(cat) or []
-        for d in devs:
-            if d["status"] == False:
-                all_downs.append(d)
+    all_devices = all_devices_status()
+    all_downs = [d for d in all_devices if not d["status"]]
     return jsonify(all_downs)
 
 @app.route("/api/devices-list")
 def devices_list_api():
-    all_devices=[]
-    for cat in ["radio","ap","switch","router","server","other"]:
-        devs=device_status(cat)
-        if devs:
-            all_devices.extend(devs)
-    return jsonify(all_devices)
+    return jsonify(all_devices_status())
 
 @app.route("/api/devices-stats")
 def api_devices_stats():
@@ -422,6 +427,16 @@ def topology_location_sites_api(location_id):
 @app.route("/api/topology/site/<int:site_id>/devices")
 def topology_site_devices_api(site_id):
     return jsonify(site_devices(site_id))
+
+@app.route("/api/topology/paths")
+def topology_paths_api():
+    return jsonify(topology_paths())
+
+@app.route("/api/topology/generate-positions", methods=["POST"])
+@login_required
+def generate_positions_api():
+    result = generate_grid_positions()
+    return jsonify(result)
 
 @app.route("/api/save-position", methods=["POST"])
 @login_required
@@ -493,7 +508,8 @@ def location_page(location_id):
             location=loc,
             sites=site_data_list,
             total_devices=total_devices,
-            down_devices=down_devices
+            down_devices=down_devices,
+            active_page='locations'
         )
     finally:
         s.close()
@@ -573,7 +589,8 @@ def site_page(site_id):
             total_pages=total_pages,
             search=search,
             category_filter=category_filter,
-            categories=categories
+            categories=categories,
+            active_page='sites'
         )
     finally:
         s.close()

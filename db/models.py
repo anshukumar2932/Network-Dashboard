@@ -5,7 +5,7 @@ from typing import List, Optional
 from sqlalchemy import create_engine, ForeignKey, String, Integer, BOOLEAN, Float, DateTime, delete, Enum, event, Index
 from sqlalchemy.orm import DeclarativeBase,Mapped,mapped_column, relationship
 from flask_login import UserMixin
-from datetime import datetime
+from datetime import datetime, timezone
 
 engine =create_engine(os.getenv("DATABASE_URL", "sqlite:///network.db"),echo=False)
 @event.listens_for(engine,"connect")
@@ -81,7 +81,7 @@ class PingHistory(Base):
     __tablename__ = "ping_history"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"))
-    ping_time: Mapped[datetime] = mapped_column(DateTime,default=datetime.utcnow)
+    ping_time: Mapped[datetime] = mapped_column(DateTime,default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     latency_ms: Mapped[float | None] = mapped_column(Float)
     status: Mapped[bool] = mapped_column(BOOLEAN, nullable=False, default=True)
     device: Mapped["Device"] = relationship(back_populates="ping_history")
@@ -91,7 +91,7 @@ class Alert(Base):
     id: Mapped[int] = mapped_column(Integer,primary_key=True)
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"))
     link_id: Mapped[int | None] = mapped_column(ForeignKey("links.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime,default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime,default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     resolved: Mapped[bool] = mapped_column(BOOLEAN,default=False)
 
 class TopologyNode(Base):
@@ -119,7 +119,17 @@ class TopologyCache(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     key: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     data: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow) 
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)) 
+
+class TopologyPath(Base):
+    __tablename__ = "topology_paths"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    source_device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False)
+    destination_device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False)
+    route_json: Mapped[str] = mapped_column(String, nullable=False)
+    active: Mapped[bool] = mapped_column(BOOLEAN, default=True)
+    interval_seconds: Mapped[int] = mapped_column(Integer, default=30)
 
 
 

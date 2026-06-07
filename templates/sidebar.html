@@ -1,0 +1,25 @@
+<div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <h5>Network Monitor</h5>
+        <button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Toggle sidebar">&#9776;</button>
+    </div>
+    <nav>
+        <a href="/dashboard"{% if active_page == 'dashboard' %} class="active"{% endif %}>Dashboard</a>
+        <a href="/locations"{% if active_page == 'locations' %} class="active"{% endif %}>Locations</a>
+        <a href="/sites"{% if active_page == 'sites' %} class="active"{% endif %}>Sites</a>
+        <a href="/devices"{% if active_page == 'devices' %} class="active"{% endif %}>Devices</a>
+        <a href="/devices/upload"{% if active_page == 'upload' %} class="active"{% endif %}>Upload Excel</a>
+        <a href="/details/view"{% if active_page == 'details' %} class="active"{% endif %}>Details</a>
+        <a href="/logout">Logout</a>
+    </nav>
+</div>
+<script>
+var sidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+if (sidebarCollapsed) document.body.classList.add('sidebar-collapsed');
+
+function toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed;
+    document.body.classList.toggle('sidebar-collapsed', sidebarCollapsed);
+    localStorage.setItem('sidebarCollapsed', sidebarCollapsed);
+}
+</script>

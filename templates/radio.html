@@ -6,32 +6,58 @@
 <title>Dashboard - Network Monitor</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <style>
-body { background: #f5f8fc; font-family: 'Segoe UI', sans-serif; }
-.sidebar { width:240px; min-height:100vh; background:#0f172a; color:#fff; position:fixed; padding:24px 0; }
+body { background: #f5f8fc; font-family: 'Segoe UI', sans-serif; overflow-x: hidden; }
+.sidebar { width:240px; min-height:100vh; background:#0f172a; color:#fff; position:fixed; padding:24px 0; z-index: 1000; }
 .sidebar h5 { padding:0 20px; margin-bottom:24px; font-weight:700; }
 .sidebar a { display:block; padding:10px 20px; color:#94a3b8; text-decoration:none; transition:.2s; }
 .sidebar a:hover, .sidebar a.active { color:#fff; background:#1e293b; }
-.main { margin-left:240px; padding:32px; }
-.kpi-card { background:#fff; border-radius:16px; padding:20px; border:1px solid #e2e8f0; text-align:center; }
+.main { margin-left:240px; padding:32px; min-height: 100vh; }
+
+/* KPI Cards */
+.kpi-card { background:#fff; border-radius:16px; padding:20px; border:1px solid #e2e8f0; text-align:center; height: 100%; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
 .kpi-card .number { font-size:32px; font-weight:700; color:#0f172a; }
 .kpi-card .label { color:#64748b; font-size:14px; }
-.chart-card { background:#fff; border-radius:16px; padding:20px; border:1px solid #e2e8f0; }
-#cy { width:100%; height:500px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; }
+
+/* Chart & Topology */
+.chart-card { background:#fff; border-radius:16px; padding:20px; border:1px solid #e2e8f0; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+#cy { width:100%; height: 500px; min-height: 400px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; position: relative; }
 #cy-loading { display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; height:500px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; color:#94a3b8; font-size:16px; }
-.panel-card { background:#fff; border-radius:16px; border:1px solid #e2e8f0; padding:20px; height:450px; display:flex; flex-direction:column; }
-.panel-card .panel-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+
+/* Panels */
+.panel-card { background:#fff; border-radius:16px; border:1px solid #e2e8f0; padding:20px; min-height: 450px; max-height: 600px; display:flex; flex-direction:column; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+.panel-card .panel-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-shrink: 0; }
 .panel-card .panel-head h5 { margin:0; }
-.panel-card .panel-body { flex:1; position:relative; overflow-y:auto; }
+.panel-card .panel-body { flex:1; position:relative; overflow-y:auto; overflow-x: hidden; padding-right: 5px; }
+
+/* Alerts & Lists */
 .alert-item { padding:8px 12px; border-radius:8px; margin-bottom:6px; font-size:14px; }
 .alert-down { background:#fef2f2; border-left:3px solid #dc3545; }
 .cat-row { display:flex; align-items:center; padding:8px 0; border-bottom:1px solid #f1f5f9; font-size:14px; }
 .cat-row:last-child { border-bottom:none; }
-.cat-row .cat-dot { width:12px; height:12px; border-radius:50%; margin-right:10px; }
+.cat-row .cat-dot { width:12px; height:12px; border-radius:50%; margin-right:10px; flex-shrink: 0; }
 .cat-row .cat-name { flex:1; font-weight:500; text-transform:capitalize; }
 .cat-row .cat-count { font-weight:600; color:#0f172a; margin:0 12px; }
+
+/* Site Info */
 .site-info { font-size:13px; }
 .site-info h6 { font-weight:600; margin-bottom:6px; }
 .site-info .row-item { display:flex; justify-content:space-between; padding:2px 0; }
+
+/* Blinking Animation for Sources */
+@keyframes pulse-border {
+    0% { border-width: 2px; border-opacity: 0.4; }
+    50% { border-width: 6px; border-opacity: 0.8; }
+    100% { border-width: 2px; border-opacity: 0.4; }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .sidebar { width: 100%; height: auto; position: relative; min-height: auto; padding: 10px 0; }
+    .sidebar h5 { display: none; }
+    .sidebar a { display: inline-block; padding: 5px 10px; font-size: 12px; }
+    .main { margin-left: 0; padding: 16px; }
+    #cy { height: 400px; }
+}
 </style>
 </head>
 <body>
@@ -140,8 +166,28 @@ body { background: #f5f8fc; font-family: 'Segoe UI', sans-serif; }
     let pieChart = null;
     let cy = null;
     let cyReady = false;
+    
+    // Updated Style with Blinking Animation
     const style = [
-        { selector: 'node', style: { 'label': 'data(label)', 'text-valign': 'bottom', 'font-size': '11px', 'width': '25px', 'height': '25px', 'background-color': '#94a3b8' } },
+        { 
+            selector: 'node', 
+            style: { 
+                'label': 'data(label)', 
+                'text-valign': 'bottom', 
+                'font-size': '11px', 
+                'width': '25px', 
+                'height': '25px', 
+                'background-color': '#94a3b8',
+                'border-width': 2,
+                'border-color': '#ffffff',
+                'border-opacity': 0.5,
+                // Animation for active nodes
+                'animation-duration': '1s',
+                'animation-iteration-count': 'infinite',
+                'animation-name': 'pulse-border',
+                'animation-timing-function': 'linear'
+            } 
+        },
         { selector: 'node[type = "location"]', style: { 'width': 50, 'height': 50, 'font-size': '14px', 'font-weight': 'bold' } },
         { selector: 'node[type = "site"]', style: { 'width': 22, 'height': 22, 'font-size': '10px' } },
         { selector: 'node[type = "device"]', style: { 'width': 12, 'height': 12, 'font-size': '8px' } },
@@ -149,6 +195,7 @@ body { background: #f5f8fc; font-family: 'Segoe UI', sans-serif; }
         { selector: 'edge[status = false]', style: { 'line-color': '#dc3545', 'width': 3, 'font-size': '10px', 'text-margin-y': -8 } },
         { selector: 'edge', style: { 'label': 'data(label)', 'text-valign': 'top', 'text-background-color': '#ffffff', 'text-background-opacity': 1, 'text-background-padding': 2 } }
     ];
+
     const expandedLocations = new Map();
     const expandedSites = new Map();
     const locationCache = {};
@@ -200,7 +247,7 @@ body { background: #f5f8fc; font-family: 'Segoe UI', sans-serif; }
         });
         if (toAdd.length) cy.add(toAdd);
 
-        // Remove stale elements (only non-location non-site non-device)
+        // Remove stale elements
         const validIds = new Set();
         (nodes || []).forEach(function(n) { validIds.add(n.data.id); });
         (edges || []).forEach(function(e) { validIds.add(e.data.id); });
@@ -217,6 +264,14 @@ body { background: #f5f8fc; font-family: 'Segoe UI', sans-serif; }
     function colorAllNodes() {
         cy.nodes().forEach(function(n) {
             n.style('background-color', nodeColor(n.data()));
+            // Re-apply animation only to UP nodes to save resources
+            if(n.data('status') === 'GREEN' || n.data('status') === true) {
+                n.style('animation-name', 'pulse-border');
+                n.style('border-color', '#ffffff');
+            } else {
+                n.style('animation-name', 'none');
+                n.style('border-color', 'transparent');
+            }
         });
     }
 
@@ -228,6 +283,14 @@ body { background: #f5f8fc; font-family: 'Segoe UI', sans-serif; }
                 el.data('status', c.status);
                 el.style('background-color', nodeColor(c));
                 el.data('status_bool', c.status);
+                // Update animation based on new status
+                if(c.status === 'GREEN' || c.status === true) {
+                    el.style('animation-name', 'pulse-border');
+                    el.style('border-color', '#ffffff');
+                } else {
+                    el.style('animation-name', 'none');
+                    el.style('border-color', 'transparent');
+                }
             }
         });
     }
@@ -335,7 +398,6 @@ body { background: #f5f8fc; font-family: 'Segoe UI', sans-serif; }
                 siteIds.add(n.data.id);
             });
 
-            // Add edges where both endpoints are visible
             (data.edges || []).forEach(function(e) {
                 if (cy.getElementById(e.data.id).length) return;
                 const srcVis = !!cy.getElementById(e.data.source).length;
@@ -346,8 +408,6 @@ body { background: #f5f8fc; font-family: 'Segoe UI', sans-serif; }
                 }
             });
 
-            // Aggregate edges: for edges whose target is NOT visible but is in another location,
-            // draw an edge to that location node instead
             var locEdgeIds = new Set();
             (data.edges || []).forEach(function(e) {
                 if (cy.getElementById(e.data.id).length) return;
@@ -442,7 +502,6 @@ body { background: #f5f8fc; font-family: 'Segoe UI', sans-serif; }
                 el.animate({ position: { x: pos.x, y: pos.y } }, { duration: 400, easing: 'ease-out' });
                 deviceIds.add(n.data.id);
 
-                // Edge from site to device
                 var eid = 'site-device-edge-' + siteId + '-' + n.data.id;
                 if (!cy.getElementById(eid).length) {
                     cy.add({
@@ -687,7 +746,7 @@ body { background: #f5f8fc; font-family: 'Segoe UI', sans-serif; }
 
     loadAlerts().then(loadDevices).then(loadGraph).then(function() { setTimeout(autoPlay, 500); });
 
-    // Poll every 30s — topology is loaded once, only alerts/devices refresh
+    // Poll every 30s
     setInterval(function() {
         loadAlerts();
         loadDevices();

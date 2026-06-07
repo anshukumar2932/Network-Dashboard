@@ -1,7 +1,8 @@
+import os
 from db.database import SessionLocal
 from db.models import Device, PingHistory, Link
 from sqlalchemy import delete
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 
 from monitor.ping import ping_device
@@ -68,7 +69,7 @@ def update_link_status(session):
             link.device_b_ref.status
         )
 
-        link.last_checked = datetime.utcnow()
+        link.last_checked = datetime.now(timezone.utc).replace(tzinfo=None)
 
 def run():
     import time as _time
@@ -84,7 +85,7 @@ def run():
         down = []
         up = []
         status_change=False
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         ping_ok = 0
         ping_fail = 0
 
@@ -121,7 +122,8 @@ def run():
                 print(f"[MONITOR] {device.hostname} ({device.ip}) recovered UP")
 
         # Cleanup old ping history
-        cutoff = now - timedelta(hours=1)
+        retention_hours = int(os.getenv("PING_HISTORY_RETENTION_HOURS", "24"))
+        cutoff = now - timedelta(hours=retention_hours)
         deleted = session.execute(delete(PingHistory).where(PingHistory.ping_time < cutoff))
         update_link_status(session)
         session.commit()
