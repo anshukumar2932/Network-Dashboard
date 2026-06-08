@@ -1,0 +1,731 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard - Network Monitor</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+body { background: #f5f8fc; font-family: 'Segoe UI', sans-serif; overflow-x: hidden; }
+
+/* Sidebar Styling */
+.sidebar { width:260px; min-height:100vh; background:#0f172a; color:#fff; position:fixed; padding:24px 0; z-index: 1050; box-shadow: 2px 0 10px rgba(0,0,0,0.1); }
+.sidebar h5 { padding:0 20px; margin-bottom:30px; font-weight:700; letter-spacing: 0.5px; }
+.sidebar a { display:block; padding:12px 20px; color:#94a3b8; text-decoration:none; transition:.2s; border-left: 3px solid transparent; }
+.sidebar a:hover, .sidebar a.active { color:#fff; background:#1e293b; border-left-color: #3b82f6; }
+
+/* Main Content Area */
+.main { margin-left:260px; padding:32px; min-height: 100vh; }
+
+/* KPI Cards */
+.kpi-card { background:#fff; border-radius:12px; padding:24px; border:1px solid #e2e8f0; text-align:center; height: 100%; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); transition: transform 0.2s; }
+.kpi-card:hover { transform: translateY(-2px); }
+.kpi-card .number { font-size:36px; font-weight:800; color:#0f172a; margin-bottom: 5px; }
+.kpi-card .label { color:#64748b; font-size:14px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* Topology Graph Container */
+.chart-card { background:#fff; border-radius:12px; padding:20px; border:1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); margin-bottom: 24px; }
+#cy { width:100%; height: 650px; min-height: 500px; border:1px solid #f1f5f9; border-radius:8px; background:#fff; position: relative; }
+#cy-loading { display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; height:650px; border:1px solid #f1f5f9; border-radius:8px; background:#fff; color:#94a3b8; font-size:16px; }
+
+/* Panels */
+.panel-card { background:#fff; border-radius:12px; border:1px solid #e2e8f0; padding:20px; min-height: 450px; display:flex; flex-direction:column; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+.panel-card .panel-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-shrink: 0; border-bottom: 1px solid #f1f5f9; padding-bottom: 10px; }
+.panel-card .panel-head h5 { margin:0; font-weight: 600; color: #334155; }
+.panel-card .panel-body { flex:1; position:relative; overflow-y:auto; overflow-x: hidden; padding-right: 5px; }
+
+/* Alerts & Lists */
+.alert-item { padding:10px 12px; border-radius:8px; margin-bottom:8px; font-size:14px; background: #fff; border: 1px solid #fee2e2; }
+.alert-down { background:#fef2f2; border-left:4px solid #dc3545; }
+.cat-row { display:flex; align-items:center; padding:10px 0; border-bottom:1px solid #f1f5f9; font-size:14px; }
+.cat-row:last-child { border-bottom:none; }
+.cat-row .cat-dot { width:12px; height:12px; border-radius:50%; margin-right:10px; flex-shrink: 0; }
+.cat-row .cat-name { flex:1; font-weight:500; text-transform:capitalize; color: #475569; }
+.cat-row .cat-count { font-weight:600; color:#0f172a; margin:0 12px; }
+
+/* Site Info */
+.site-info { font-size:13px; background: #f8fafc; padding: 15px; border-radius: 8px; }
+.site-info h6 { font-weight:600; margin-bottom:8px; color: #0f172a; }
+.site-info .row-item { display:flex; justify-content:space-between; padding:4px 0; border-bottom: 1px dashed #e2e8f0; }
+.site-info .row-item:last-child { border-bottom: none; }
+
+/* BLINKING ANIMATION FOR SOURCES */
+@keyframes pulse-border {
+0% { border-width: 2px; border-opacity: 0.4; transform: scale(1); }
+50% { border-width: 6px; border-opacity: 0.8; transform: scale(1.05); }
+100% { border-width: 2px; border-opacity: 0.4; transform: scale(1); }
+}
+
+/* Responsive adjustments */
+@media (max-width: 992px) {
+.sidebar { width: 70px; padding: 20px 0; }
+.sidebar h5, .sidebar span { display: none; }
+.sidebar a { text-align: center; padding: 15px 0; font-size: 20px; }
+.main { margin-left: 70px; padding: 20px; }
+#cy { height: 500px; }
+}
+</style>
+</head>
+<body><div class="sidebar">
+    <h5>Network Monitor</h5>
+    <a href="/dashboard" class="active">Dashboard</a>
+    <a href="/dashboard/radio">Radio View</a>
+    <a href="/locations">Locations</a>
+    <a href="/sites">Sites</a>
+    <a href="/devices">Devices</a>
+    <a href="/devices/upload">Upload Excel</a>
+    <a href="/details/view">Details</a>
+    <a href="/logout">Logout</a>
+</div><div class="main">
+    <h2 class="mb-4 fw-bold text-dark">Dashboard</h2>
+
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="kpi-card">
+            <div class="number" id="kpiTotal">0</div>
+            <div class="label">Total Devices</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card">
+            <div class="number text-success" id="kpiUp">0</div>
+            <div class="label">Devices Up</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card">
+            <div class="number text-danger" id="kpiDown">0</div>
+            <div class="label">Devices Down</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card">
+            <div class="number text-warning" id="kpiAlerts">0</div>
+            <div class="label">Active Alerts</div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="chart-card">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0 fw-bold">Network Topology</h5>
+                <button id="collapseAllBtn" class="btn btn-sm btn-outline-secondary" style="display:none" onclick="collapseAll()">Collapse All</button>
+            </div>
+            <div id="cy-loading">
+                <div class="spinner-border text-primary mb-2" role="status"></div>
+                <div>Fetching topology...</div>
+            </div>
+            <div id="cy" style="display:none"></div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-5">
+        <div class="panel-card">
+            <div class="panel-head">
+                <h5>Active Alerts</h5>
+                <span class="badge bg-danger rounded-pill px-3" id="alertCount">0</span>
+            </div>
+            <div class="panel-body" id="alertList">
+                <div class="text-muted text-center py-4">No active alerts</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-7">
+        <div class="panel-card">
+            <div class="panel-head">
+                <h5>Device Status Overview</h5>
+            </div>
+            <div class="panel-body">
+                <div style="height: 220px; display:flex; justify-content:center;">
+                    <canvas id="pieChart"></canvas>
+                </div>
+                <hr class="my-3">
+                <div id="categoryList" style="max-height: 200px; overflow-y: auto;"></div>
+                <div id="siteInfoPanel" class="site-info mt-3 text-muted text-center">
+                    <em>Tap a node on the map to view details</em>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+</div>
+<div class="modal fade" id="linkModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title" id="linkModalLabel">Link Details</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="linkModalBody"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://unpkg.com/cytoscape/dist/cytoscape.min.js"></script>
+<script>
+(function(){
+    let pieChart = null;
+    let cy = null;
+    let cyReady = false;
+    
+    const style = [
+        { 
+            selector: 'node', 
+            style: { 
+                'label': 'data(label)', 
+                'text-valign': 'bottom', 
+                'text-halign': 'center',
+                'font-size': '11px', 
+                'font-weight': 'bold',
+                'color': '#334155',
+                'width': '25px', 
+                'height': '25px', 
+                'background-color': '#94a3b8',
+                'border-width': 2,
+                'border-color': '#ffffff',
+                'border-opacity': 0.8,
+                'text-wrap': 'wrap',
+                'text-max-width': '80px',
+                'text-overflow-wrap': 'break-word',
+                'animation-duration': '1.5s',
+                'animation-iteration-count': 'infinite',
+                'animation-name': 'pulse-border',
+                'animation-timing-function': 'ease-in-out'
+            } 
+        },
+        { selector: 'node[type = "location"]', style: { 'width': 90, 'height': 90, 'font-size': '16px', 'font-weight': 'bold', 'color': '#0f172a' } },
+        { selector: 'node[type = "site"]', style: { 'width': 50, 'height': 50, 'font-size': '12px', 'font-weight': 'bold' } },
+        { selector: 'node[type = "device"]', style: { 'width': 35, 'height': 35, 'font-size': '10px', 'font-weight': 'bold' } },
+        // ADDED 'curve-style': 'bezier' to prevent edge overlaps
+        { selector: 'edge[status = true]', style: { 'curve-style': 'bezier', 'line-color': '#198754', 'width': 2, 'font-size': '9px', 'text-margin-y': -10, 'opacity': 0.8 } },
+        { selector: 'edge[status = false]', style: { 'curve-style': 'bezier', 'line-color': '#dc3545', 'width': 2, 'font-size': '9px', 'text-margin-y': -10, 'opacity': 0.8 } },
+        { selector: 'edge', style: { 'curve-style': 'bezier', 'label': 'data(label)', 'text-valign': 'top', 'text-background-color': '#ffffff', 'text-background-opacity': 0.8, 'text-background-padding': 3, 'text-border-radius': 4 } }
+    ];
+
+    const expandedLocations = new Map();
+    const expandedSites = new Map();
+    const locationCache = {};
+    const siteCache = {};
+
+    function nodeColor(d) {
+        if (d.status === 'GREEN') return '#198754';
+        if (d.status === 'YELLOW') return '#ffc107';
+        if (d.status === 'RED') return '#dc3545';
+        if (d.status === true || d.status === 'true') return '#198754';
+        if (d.status === false || d.status === 'false') return '#dc3545';
+        return '#94a3b8';
+    }
+
+    function initGraph(data) {
+        if (!cy) {
+            cy = cytoscape({
+                container: document.getElementById('cy'),
+                style: style,
+                layout: { name: 'preset', fit: true, padding: 100 }
+            });
+        }
+        const container = document.getElementById('cy');
+        const loading = document.getElementById('cy-loading');
+        loading.style.display = 'none';
+        container.style.display = 'block';
+
+        setElements(data.nodes || [], data.edges || []);
+        cy.fit(undefined, 100);
+        setupEvents();
+        cyReady = true;
+    }
+
+    function setElements(nodes, edges) {
+        const existing = new Set();
+        cy.nodes().forEach(function(n) { existing.add(n.id()); });
+        cy.edges().forEach(function(e) { existing.add(e.id()); });
+
+        const toAdd = [];
+        (nodes || []).forEach(function(n) {
+            if (!existing.has(n.data.id)) {
+                toAdd.push({ group: 'nodes', data: n.data, position: n.position });
+            }
+        });
+        (edges || []).forEach(function(e) {
+            if (!existing.has(e.data.id)) {
+                toAdd.push({ group: 'edges', data: e.data });
+            }
+        });
+        if (toAdd.length) cy.add(toAdd);
+
+        const validIds = new Set();
+        (nodes || []).forEach(function(n) { validIds.add(n.data.id); });
+        (edges || []).forEach(function(e) { validIds.add(e.data.id); });
+        cy.nodes().forEach(function(n) {
+            if (!validIds.has(n.id())) n.remove();
+        });
+        cy.edges().forEach(function(e) {
+            if (!validIds.has(e.id())) e.remove();
+        });
+
+        colorAllNodes();
+    }
+
+    function colorAllNodes() {
+        cy.nodes().forEach(function(n) {
+            n.style('background-color', nodeColor(n.data()));
+            if(n.data('status') === 'GREEN' || n.data('status') === true) {
+                n.style('animation-name', 'pulse-border');
+                n.style('border-color', '#ffffff');
+            } else {
+                n.style('animation-name', 'none');
+                n.style('border-color', 'transparent');
+            }
+        });
+    }
+
+    function setupEvents() {
+        let tapTimer = null;
+        let tappedNode = null;
+
+        cy.removeListener('tap');
+        cy.on('tap', 'node', function(evt) {
+            const node = evt.target;
+            const type = node.data('type');
+
+            if (tapTimer && tappedNode === node) {
+                clearTimeout(tapTimer);
+                tapTimer = null;
+                tappedNode = null;
+                if (type === 'location') {
+                    window.location.href = '/location/' + node.data('location_id');
+                } else if (type === 'site') {
+                    window.location.href = '/site/' + node.data('id').replace('site-', '');
+                } 
+                return;
+            }
+
+            tappedNode = node;
+            tapTimer = setTimeout(function() {
+                tapTimer = null;
+                tappedNode = null;
+                if (type === 'location') {
+                    toggleExpandLocation(node);
+                } else if (type === 'site') {
+                    toggleExpandSite(node);
+                } else if (type === 'device') {
+                    showDeviceInfo(node);
+                }
+            }, 300);
+        });
+
+        cy.on('tap', 'edge', function(evt) {
+            const d = evt.target.data();
+            document.getElementById('linkModalLabel').textContent =
+                (d.source_site_name || d.source) + ' \u2194 ' + (d.destination_site_name || d.target);
+            const body = document.getElementById('linkModalBody');
+            body.innerHTML = [
+                '<table class="table table-sm mb-0">',
+                '<tr><th colspan="2" class="text-center ' + (d.status ? 'text-success' : 'text-danger') + '">' + (d.status ? 'UP' : 'DOWN') + '</th></tr>',
+                '<tr><th colspan="2" class="bg-light">' + (d.source_site_name || d.source) + '</th></tr>',
+                '<tr><td>Device</td><td>' + (d.device_a || '-') + '</td></tr>',
+                '<tr><td>IP</td><td>' + (d.device_a_ip || '-') + '</td></tr>',
+                '<tr><td>Model</td><td>' + (d.device_a_model || '-') + '</td></tr>',
+                '<tr><th colspan="2" class="bg-light">' + (d.destination_site_name || d.target) + '</th></tr>',
+                '<tr><td>Device</td><td>' + (d.device_b || '-') + '</td></tr>',
+                '<tr><td>IP</td><td>' + (d.device_b_ip || '-') + '</td></tr>',
+                '<tr><td>Model</td><td>' + (d.device_b_model || '-') + '</td></tr>',
+                '<tr><th>Last Checked</th><td>' + (d.last_checked || '-') + '</td></tr>',
+                '</table>'
+            ].join('');
+            new bootstrap.Modal(document.getElementById('linkModal')).show();
+        });
+    }
+
+    // === Location expand/collapse ===
+    async function toggleExpandLocation(locNode) {
+        const locId = locNode.data('location_id');
+        if (expandedLocations.has(locId)) {
+            collapseLocation(locId);
+        } else {
+            await expandLocation(locNode, locId);
+        }
+    }
+
+    async function expandLocation(locNode, locId) {
+        try {
+            let data;
+            if (locationCache[locId]) {
+                data = locationCache[locId];
+            } else {
+                const r = await fetch('/api/topology/location/' + locId + '/sites');
+                data = await r.json();
+                locationCache[locId] = data;
+            }
+
+            const siteIds = new Set();
+            const edgeIds = new Set();
+            const bx = locNode.position('x');
+            const by = locNode.position('y');
+
+            const spacing = 350;
+            const startX = bx - (((data.nodes || []).length - 1) * spacing) / 2;
+            const fixedY = by + 200;
+
+            (data.nodes || []).forEach(function(n, i) {
+                if (cy.getElementById(n.data.id).length) return;
+                
+                const pos = {
+                    x: startX + i * spacing,
+                    y: fixedY
+                };
+                
+                // Add exactly at parent position so the animation physically pushes outwards
+                cy.add({ group: 'nodes', data: n.data, position: { x: bx, y: by } });
+                const el = cy.getElementById(n.data.id);
+                el.style('background-color', nodeColor(n.data));
+                el.animate({ position: pos }, { duration: 400, easing: 'ease-out' });
+                siteIds.add(n.data.id);
+            });
+
+            (data.edges || []).forEach(function(e) {
+                if (cy.getElementById(e.data.id).length) return;
+                const srcVis = !!cy.getElementById(e.data.source).length;
+                const tgtVis = !!cy.getElementById(e.data.target).length;
+                if (srcVis && tgtVis) {
+                    cy.add({ group: 'edges', data: e.data });
+                    edgeIds.add(e.data.id);
+                }
+            });
+
+            var locEdgeIds = new Set();
+            (data.edges || []).forEach(function(e) {
+                if (cy.getElementById(e.data.id).length) return;
+                var srcVis = !!cy.getElementById(e.data.source).length;
+                var tgtVis = !!cy.getElementById(e.data.target).length;
+                if (srcVis && !tgtVis) {
+                    var tgtLocId = e.data.destination_location_id || e.data.source_location_id;
+                    var aggId = 'agg-' + e.data.id;
+                    if (!cy.getElementById(aggId).length) {
+                        cy.add({
+                            group: 'edges',
+                            data: {
+                                id: aggId,
+                                source: e.data.source,
+                                target: 'loc-' + tgtLocId,
+                                label: '',
+                                status: e.data.status,
+                                source_site_name: e.data.source_site_name || '',
+                                destination_site_name: '',
+                                device_a: e.data.device_a || '',
+                                device_a_ip: e.data.device_a_ip || '',
+                                device_a_model: e.data.device_a_model || '',
+                                device_b: e.data.device_b || '',
+                                device_b_ip: e.data.device_b_ip || '',
+                                device_b_model: e.data.device_b_model || '',
+                                last_checked: e.data.last_checked || ''
+                            }
+                        });
+                    }
+                    locEdgeIds.add(aggId);
+                }
+            });
+
+            expandedLocations.set(locId, { siteIds: siteIds, edgeIds: edgeIds, locEdgeIds: locEdgeIds });
+            updateCollapseBtn();
+            
+            // Wait for animation to settle before fitting the screen
+            setTimeout(() => cy.fit(undefined, 100), 450);
+            
+        } catch(e) {
+            console.error('Expand location failed:', e);
+        }
+    }
+
+    function collapseLocation(locId) {
+        var entry = expandedLocations.get(locId);
+        if (!entry) return;
+        entry.siteIds.forEach(function(id) { var el = cy.getElementById(id); if (el.length) el.remove(); });
+        entry.edgeIds.forEach(function(id) { var el = cy.getElementById(id); if (el.length) el.remove(); });
+        (entry.locEdgeIds || []).forEach(function(id) { var el = cy.getElementById(id); if (el.length) el.remove(); });
+        expandedLocations.delete(locId);
+        updateCollapseBtn();
+        cy.fit(undefined, 100);
+    }
+
+    // === Site expand/collapse ===
+    async function toggleExpandSite(siteNode) {
+        var siteId = siteNode.data('id').replace('site-', '');
+        if (expandedSites.has(siteId)) {
+            collapseSite(siteId);
+        } else {
+            await expandSite(siteNode, siteId);
+        }
+    }
+
+    async function expandSite(siteNode, siteId) {
+        try {
+            var data;
+            if (siteCache[siteId]) {
+                data = siteCache[siteId];
+            } else {
+                var r = await fetch('/api/topology/site/' + siteId + '/devices');
+                data = await r.json();
+                siteCache[siteId] = data;
+            }
+            var deviceIds = new Set();
+            var edgeIds = new Set();
+            var siteNodeId = 'site-' + siteId;
+            var bx = siteNode.position('x');
+            var by = siteNode.position('y');
+
+            var spacing = 70;
+            var startX = bx - (((data.nodes || []).length - 1) * spacing) / 2;
+            var fixedY = by + 150;
+
+            (data.nodes || []).forEach(function(n, i) {
+                if (cy.getElementById(n.data.id).length) return;
+                
+                var pos = {
+                    x: startX + i * spacing,
+                    y: fixedY
+                };
+                
+                // Add exactly at parent position for outward pop-out effect
+                cy.add({ group: 'nodes', data: n.data, position: { x: bx, y: by } });
+                var el = cy.getElementById(n.data.id);
+                el.style('background-color', nodeColor(n.data));
+                el.animate({ position: pos }, { duration: 400, easing: 'ease-out' });
+                deviceIds.add(n.data.id);
+
+                var eid = 'site-device-edge-' + siteId + '-' + n.data.id;
+                if (!cy.getElementById(eid).length) {
+                    cy.add({
+                        group: 'edges',
+                        data: {
+                            id: eid,
+                            source: siteNodeId,
+                            target: n.data.id,
+                            label: '',
+                            status: n.data.status
+                        }
+                    });
+                    edgeIds.add(eid);
+                }
+            });
+
+            expandedSites.set(siteId, { deviceIds: deviceIds, edgeIds: edgeIds });
+            updateCollapseBtn();
+            
+            // Wait for animation to settle before fitting the screen
+            setTimeout(() => cy.fit(undefined, 100), 450);
+            
+        } catch(e) {
+            console.error('Expand site failed:', e);
+        }
+    }
+
+    function collapseSite(siteId) {
+        var entry = expandedSites.get(siteId);
+        if (!entry) return;
+        entry.deviceIds.forEach(function(id) { var el = cy.getElementById(id); if (el.length) el.remove(); });
+        (entry.edgeIds || []).forEach(function(id) { var el = cy.getElementById(id); if (el.length) el.remove(); });
+        expandedSites.delete(siteId);
+        updateCollapseBtn();
+        cy.fit(undefined, 100);
+    }
+
+    function updateCollapseBtn() {
+        var btn = document.getElementById('collapseAllBtn');
+        btn.style.display = (expandedLocations.size > 0 || expandedSites.size > 0) ? 'inline-block' : 'none';
+    }
+
+    window.collapseAll = function() {
+        Array.from(expandedSites.keys()).forEach(function(k) { collapseSite(k); });
+        Array.from(expandedLocations.keys()).forEach(function(k) { collapseLocation(k); });
+        if (cy) cy.fit(undefined, 100);
+    };
+
+    function showDeviceInfo(node) {
+        var d = node.data();
+        var panel = document.getElementById('siteInfoPanel');
+        if (panel) {
+            var statusText = (d.status === true || d.status === 'true' || d.status === 'GREEN') ? 'UP' : 'DOWN';
+            var statusClass = (d.status === true || d.status === 'true' || d.status === 'GREEN') ? 'bg-success' : 'bg-danger';
+            panel.innerHTML = [
+                '<h6>' + d.label + '</h6>',
+                '<div class="row-item"><span>IP</span><span>' + (d.ip || '-') + '</span></div>',
+                '<div class="row-item"><span>Model</span><span>' + (d.model || '-') + '</span></div>',
+                '<div class="row-item"><span>Category</span><span>' + (d.category || '-') + '</span></div>',
+                '<div class="row-item"><span>Status</span><span class="badge ' + statusClass + '">' + statusText + '</span></div>'
+            ].join('');
+        }
+    }
+
+    // === Auto Play / Guided Tour ===
+    function sleep(ms) {
+        return new Promise(function(resolve) { setTimeout(resolve, ms); });
+    }
+
+    async function autoPlay() {
+        collapseAll();
+        await sleep(500);
+
+        var loc1 = cy.getElementById('loc-1');
+        if (loc1.length) {
+            cy.animate({ center: { eles: loc1 }, zoom: 1.5 }, { duration: 500 });
+            await sleep(600);
+            await expandLocation(loc1, 1);
+            await sleep(800);
+            cy.animate({ fit: { eles: cy.getElementById('loc-1').connectedEdges().union(cy.getElementById('loc-1')), padding: 80 } }, { duration: 500 });
+            await sleep(600);
+        }
+
+        var loc2 = cy.getElementById('loc-2');
+        if (loc2.length) {
+            cy.animate({ center: { eles: loc2 }, zoom: 1.5 }, { duration: 500 });
+            await sleep(600);
+            await expandLocation(loc2, 2);
+            await sleep(800);
+            cy.animate({ fit: { eles: cy.elements(), padding: 80 } }, { duration: 500 });
+            await sleep(600);
+        }
+
+        var loc1Sites = expandedLocations.get(1);
+        if (loc1Sites) {
+            var siteIds = Array.from(loc1Sites.siteIds);
+            for (var i = 0; i < siteIds.length; i++) {
+                var siteEl = cy.getElementById(siteIds[i]);
+                if (siteEl.length && !expandedSites.has(siteIds[i].replace('site-', ''))) {
+                    cy.animate({ center: { eles: siteEl }, zoom: 2 }, { duration: 400 });
+                    await sleep(500);
+                    await expandSite(siteEl, siteIds[i].replace('site-', ''));
+                    await sleep(400);
+                }
+            }
+        }
+
+        cy.animate({ fit: { eles: cy.elements(), padding: 60 } }, { duration: 600 });
+    }
+
+    // === Auto-scroll alerts panel ===
+    var alertScrollInterval = null;
+
+    function startAlertScroll() {
+        stopAlertScroll();
+        alertScrollInterval = setInterval(function() {
+            var container = document.getElementById('alertList');
+            if (!container) return;
+            var scrollable = container.parentElement;
+            if (!scrollable) return;
+            var maxScroll = scrollable.scrollHeight - scrollable.clientHeight;
+            if (maxScroll <= 0) return;
+            var next = scrollable.scrollTop + 30;
+            if (next >= maxScroll) {
+                next = 0;
+            }
+            scrollable.scrollTop = next;
+        }, 200);
+    }
+
+    function stopAlertScroll() {
+        if (alertScrollInterval) {
+            clearInterval(alertScrollInterval);
+            alertScrollInterval = null;
+        }
+    }
+
+    async function loadGraph() {
+        try {
+            var r = await fetch("/api/topology/locations");
+            var data = await r.json();
+            initGraph(data);
+        } catch(e) {
+            document.getElementById('cy-loading').innerHTML = 'Unavailable: ' + e.message;
+        }
+    }
+
+    function updatePieAndCategories(data) {
+        if (pieChart) pieChart.destroy();
+        var ctx = document.getElementById("pieChart").getContext("2d");
+        pieChart = new Chart(ctx, {
+            type: "doughnut",
+            data: {
+                labels: ["Up", "Down"],
+                datasets: [{
+                    data: [data.up, data.down],
+                    backgroundColor: ["#198754", "#dc3545"],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: "bottom", labels: { boxWidth: 12, padding: 12 } } }
+            }
+        });
+
+        var colors = ["#3b82f6","#8b5cf6","#f59e0b","#06b6d4","#ef4444","#84cc16"];
+        var container = document.getElementById("categoryList");
+        container.innerHTML = (data.categories || []).map(function(c, i) {
+            if (!c.total) return "";
+            return '<div class="cat-row">' +
+                '<span class="cat-dot" style="background:' + colors[i % colors.length] + '"></span>' +
+                '<span class="cat-name">' + c.category + '</span>' +
+                '<span class="cat-count">' + c.total + '</span>' +
+                '<span class="badge bg-success me-1">' + c.up + ' up</span>' +
+                '<span class="badge bg-danger">' + c.down + ' down</span>' +
+                '</div>';
+        }).join("");
+    }
+
+    async function loadAlerts() {
+        try {
+            var r = await fetch("/api/alerts");
+            var alerts = await r.json();
+            var container = document.getElementById("alertList");
+            document.getElementById("alertCount").textContent = alerts.length;
+            if (!alerts.length) {
+                container.innerHTML = '<div class="text-muted text-center py-4">All devices operational</div>';
+                stopAlertScroll();
+                return;
+            }
+            container.innerHTML = alerts.map(function(a) {
+                return '<div class="alert-item alert-down">' +
+                    '<strong>' + a.label + '</strong>' +
+                    '<span class="text-muted ms-2">' + a.ip + '</span>' +
+                    '<span class="text-muted ms-2">' + a.site + '</span>' +
+                    '</div>';
+            }).join("");
+            startAlertScroll();
+        } catch(e) {
+            document.getElementById("alertList").innerHTML = '<div class="text-muted text-center py-4">Unavailable</div>';
+            stopAlertScroll();
+        }
+    }
+
+    async function loadDevices() {
+        try {
+            var r = await fetch("/api/devices-stats");
+            var data = await r.json();
+            document.getElementById("kpiTotal").textContent = data.total;
+            document.getElementById("kpiUp").textContent = data.up;
+            document.getElementById("kpiDown").textContent = data.down;
+            updatePieAndCategories(data);
+        } catch(e) {}
+    }
+
+    loadAlerts().then(loadDevices).then(loadGraph).then(function() { setTimeout(autoPlay, 500); });
+
+    // Poll every 30s
+    setInterval(function() {
+        loadAlerts();
+        loadDevices();
+    }, 30000);
+})();
+</script></body>
+</html>
+
+```
