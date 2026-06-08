@@ -1,7 +1,11 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
 from apscheduler.schedulers.background import BackgroundScheduler
 from monitor.monitor import run
 
 scheduler = BackgroundScheduler()
 
-scheduler.add_job(run,trigger="interval",minutes=5,id="network_monitor")
+interval = int(os.getenv("MONITOR_INTERVAL_MINUTES", "5"))
+scheduler.add_job(run,trigger="interval",minutes=interval,id="network_monitor")
 

@@ -1,10 +1,14 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
 from typing import List, Optional
-from sqlalchemy import create_engine, ForeignKey, String, Integer,BOOLEAN,Float,DateTime, delete,Enum,event
+from sqlalchemy import create_engine, ForeignKey, String, Integer, BOOLEAN, Float, DateTime, delete, Enum, event, Index
 from sqlalchemy.orm import DeclarativeBase,Mapped,mapped_column, relationship
-from datetime import datetime
+from flask_login import UserMixin
+from datetime import datetime, timezone
 
-engine =create_engine('sqlite:///network.db',echo=True)
-@engine.listens_for(engine,"connect")
+engine =create_engine(os.getenv("DATABASE_URL", "sqlite:///network.db"),echo=False)
+@event.listens_for(engine,"connect")
 def set_sqlite_pragma(dbapi_connection,connection_record):
     cursor=dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
@@ -21,6 +25,9 @@ class Location(Base):
 
 class Site(Base):
     __tablename__="sites"
+    __table_args__ = (
+        Index("idx_site_location", "location_id"),
+    )
     id : Mapped[int] =mapped_column(Integer, primary_key=True)
     location_id :Mapped[int] = mapped_column(ForeignKey("locations.id"), nullable=False)
     name :Mapped[str] = mapped_column(String, nullable=False)
@@ -34,12 +41,16 @@ class Site(Base):
     
 class Device(Base):
     __tablename__ = 'devices'
+    __table_args__ = (
+        Index("idx_device_site", "site_id"),
+        Index("idx_device_status", "status"),
+    )
     id: Mapped[int]= mapped_column(Integer, primary_key=True)
     site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"),nullable=False)
     hostname: Mapped[str] = mapped_column(String, nullable=False,unique=True)
     model: Mapped[str] = mapped_column(String, nullable=False)
     ip: Mapped[str] = mapped_column(String,nullable=False,unique=True)
-    category: Mapped[str] =mapped_column(Enum("radio","ap","switch","router","server",name="device_category"),nullable=False)
+    category: Mapped[str] =mapped_column(Enum("radio","ap","switch","router","server","other",name="device_category"),nullable=False)
     status: Mapped[bool] = mapped_column(BOOLEAN, nullable=False, default=True)
     last_seen: Mapped[datetime| None] = mapped_column(DateTime)
     site: Mapped["Site"] = relationship(back_populates="devices")
@@ -49,6 +60,10 @@ class Device(Base):
     
 class Link(Base):
     __tablename__ = "links"
+    __table_args__ = (
+        Index("idx_link_source", "source_site"),
+        Index("idx_link_destination", "destination_site"),
+    )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_site: Mapped[int] = mapped_column(ForeignKey("sites.id"),nullable=False,)
     destination_site: Mapped[int] = mapped_column(ForeignKey("sites.id"),nullable=False)
@@ -66,7 +81,7 @@ class PingHistory(Base):
     __tablename__ = "ping_history"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"))
-    ping_time: Mapped[datetime] = mapped_column(DateTime,default=datetime.utcnow)
+    ping_time: Mapped[datetime] = mapped_column(DateTime,default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     latency_ms: Mapped[float | None] = mapped_column(Float)
     status: Mapped[bool] = mapped_column(BOOLEAN, nullable=False, default=True)
     device: Mapped["Device"] = relationship(back_populates="ping_history")
@@ -76,14 +91,45 @@ class Alert(Base):
     id: Mapped[int] = mapped_column(Integer,primary_key=True)
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"))
     link_id: Mapped[int | None] = mapped_column(ForeignKey("links.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime,default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime,default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     resolved: Mapped[bool] = mapped_column(BOOLEAN,default=False)
 
-class User(Base):
+class TopologyNode(Base):
+    __tablename__ = "topology_nodes"
+    __table_args__ = (
+        Index("idx_topology_site", "site_id"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), unique=True, nullable=False)
+    x_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    y_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    pinned: Mapped[bool] = mapped_column(BOOLEAN, default=False)
+
+class User(Base, UserMixin):
     __tablename__="users"
     id: Mapped[int] =mapped_column(primary_key=True)
     user: Mapped[str] =mapped_column(String,nullable=False,unique=True)
     passwd: Mapped[str] = mapped_column(String,nullable=False)
+    must_change_password: Mapped[bool] = mapped_column(BOOLEAN, default=True)
+
+
+class TopologyCache(Base):
+    __tablename__ = "topology_cache"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    data: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)) 
+
+class TopologyPath(Base):
+    __tablename__ = "topology_paths"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    source_device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False)
+    destination_device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False)
+    route_json: Mapped[str] = mapped_column(String, nullable=False)
+    active: Mapped[bool] = mapped_column(BOOLEAN, default=True)
+    interval_seconds: Mapped[int] = mapped_column(Integer, default=30)
 
 
 

@@ -18,30 +18,32 @@ ALERT_FROM = os.getenv("ALERT_FROM")
 ALERT_TO = os.getenv("ALERT_TO")
 
 def send_email(subject: str, html_body: str):
+    try:
+        msg = MIMEMultipart()
 
-    msg = MIMEMultipart()
+        msg["Subject"] = subject
+        msg["From"] = ALERT_FROM
+        msg["To"] = ALERT_TO
 
-    msg["Subject"] = subject
-    msg["From"] = ALERT_FROM
-    msg["To"] = ALERT_TO
-
-    msg.attach(
-        MIMEText(html_body, "html")
-    )
-
-    with smtplib.SMTP(
-        SMTP_SERVER,
-        SMTP_PORT
-    ) as server:
-
-        server.starttls()
-
-        server.login(
-            SMTP_USERNAME,
-            SMTP_PASSWORD
+        msg.attach(
+            MIMEText(html_body, "html")
         )
 
-        server.send_message(msg)
+        with smtplib.SMTP(
+            SMTP_SERVER,
+            SMTP_PORT
+        ) as server:
+
+            server.starttls()
+
+            server.login(
+                SMTP_USERNAME,
+                SMTP_PASSWORD
+            )
+
+            server.send_message(msg)
+    except Exception as e:
+        print(f"[ALERT] Failed to send email: {e}")
 
 
 def send_alert_down(devices):
@@ -54,7 +56,7 @@ def send_alert_down(devices):
     for device in devices:
         rows += f"""
         <tr>
-            <td>{device.name}</td>
+            <td>{device.hostname}</td>
             <td>{device.ip}</td>
         </tr>
         """
@@ -88,7 +90,7 @@ def send_alert_up(devices):
     for device in devices:
         rows += f"""
         <tr>
-            <td>{device.name}</td>
+            <td>{device.hostname}</td>
             <td>{device.ip}</td>
         </tr>
         """
