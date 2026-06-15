@@ -373,12 +373,12 @@
                                value="{{ edit_link.source_location or '' if edit_link else '' }}"
                                list="loc-datalist" autocomplete="off">
 
-                        <label class="form-label small text-muted mb-1">Category <span class="text-danger">*</span></label>
+                        <label class="form-label small text-muted mb-1">Category</label>
                         <div class="ip-autocomplete mb-2">
                             <input type="text" name="source_category" id="source_category" class="form-control"
                                    placeholder="e.g. radio, ap" style="font-size:13px;"
                                    value="{{ edit_link.source_category or '' if edit_link else '' }}"
-                                   autocomplete="off" required>
+                                   autocomplete="off">
                             <div class="dropdown-list" id="ac-source-cat-list"></div>
                         </div>
 
@@ -404,12 +404,12 @@
                                value="{{ edit_link.destination_location or '' if edit_link else '' }}"
                                list="loc-datalist2" autocomplete="off">
 
-                        <label class="form-label small text-muted mb-1">Category <span class="text-danger">*</span></label>
+                        <label class="form-label small text-muted mb-1">Category</label>
                         <div class="ip-autocomplete mb-2">
                             <input type="text" name="destination_category" id="destination_category" class="form-control"
                                    placeholder="e.g. radio, ap" style="font-size:13px;"
                                    value="{{ edit_link.destination_category or '' if edit_link else '' }}"
-                                   autocomplete="off" required>
+                                   autocomplete="off">
                             <div class="dropdown-list" id="ac-dest-cat-list"></div>
                         </div>
 
@@ -515,7 +515,7 @@
         <table class="table table-hover mb-0">
             <thead>
                 <tr>
-                    <th class="sort-th" style="width:46px">
+                    <th class="sort-th" style="width:46px">category
                         <a href="{{ url_for('links_route', sort_by='id', sort_order='asc' if sort_by=='id' and sort_order=='desc' else 'desc', page=1, per_page=per_page, search_ip=search_ip, filter_status=filter_status, filter_category=filter_category, filter_location=filter_location) }}"
                            class="{{ 'active' if sort_by == 'id' }}">#
                             <span class="arrow">{{ '▲' if sort_by=='id' and sort_order=='asc' else '▼' }}</span>

@@ -181,6 +181,23 @@ class User(Base, UserMixin):
     user: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     passwd: Mapped[str] = mapped_column(String, nullable=False)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=True)
+    role: Mapped[str] = mapped_column(String(20), default="viewer")  # "admin" or "viewer"
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(100), nullable=False)
+    action: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+    __table_args__ = (
+        Index("idx_audit_username", "username"),
+        Index("idx_audit_created_at", "created_at"),
+    )
 
 
 class TopologyCache(Base):

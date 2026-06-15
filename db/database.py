@@ -270,23 +270,31 @@ def get_ip_topology():
         devices = session.query(Device).all()
         device_map = {d.ip: d for d in devices}
         device_ids = {d.category_id for d in devices}
+        device_ips = [d.ip for d in devices]
 
+        # Fetch all links where either endpoint is a known device
         links = session.query(NetworkLink).options(
             selectinload(NetworkLink.source_device),
             selectinload(NetworkLink.destination_device)
         ).filter(
-            NetworkLink.source_ip.in_([d.ip for d in devices])
+            or_(
+                NetworkLink.source_ip.in_(device_ips),
+                NetworkLink.destination_ip.in_(device_ips)
+            )
         ).all()
+
         links = [l for l in links
                  if l.source_device
                  and l.source_device.category_id in device_ids]
 
+        print(f"[DB] {len(links)} links fetched")
+        for l in links:
+            print(f"  LINK id={l.id} | {l.source_ip} -> {l.destination_ip} | status={l.status}")
+
         location_groups = {}
         for d in devices:
             loc = d.location or "Unknown"
-            if loc not in location_groups:
-                location_groups[loc] = []
-            location_groups[loc].append(d.ip)
+            location_groups.setdefault(loc, []).append(d.ip)
 
         nodes = []
         loc_index = 0
@@ -297,7 +305,6 @@ def get_ip_topology():
             for i, ip in enumerate(ips):
                 d = device_map.get(ip)
                 node_status, status_bool = derive_node_status(ip, links)
-                label = d.hostname or d.device_name or ip if d else ip
                 nodes.append({
                     "data": {
                         "id": ip,
@@ -320,35 +327,7 @@ def get_ip_topology():
                 })
             loc_index += 1
 
-        edges = []
-        for link in links:
-            if not link.destination_ip:
-                continue
-            src = device_map.get(link.source_ip)
-            dst = device_map.get(link.destination_ip)
-            last_check_str = link.last_checked.strftime("%Y-%m-%d %H:%M:%S") if link.last_checked else ""
-            edges.append({
-                "data": {
-                    "id": f"link-{link.id}",
-                    "source": link.source_ip,
-                    "target": link.destination_ip,
-                    "label": link.remark or "",
-                    "status": link.status,
-                    "link_type": link.link_type or "",
-                    "bandwidth": link.bandwidth or "",
-                    "source_location": src.location if src else "",
-                    "destination_location": dst.location if src else "",
-                    "source_device_name": src.device_name if src else "",
-                    "destination_device_name": dst.device_name if dst else "",
-                    "last_checked": last_check_str,
-                    "latency_ms": link.latency_ms,
-                    "relationship": ""
-                }
-            })
-
-        node_ids = {n["data"]["id"] for n in nodes}
-
-        # Category-based hierarchy: lower number = higher in tree
+        # Category hierarchy
         CATEGORY_HIERARCHY = {
             "core": 0,
             "distribution": 1,
@@ -375,51 +354,64 @@ def get_ip_topology():
             n["data"]["level"] = tier
             n["data"]["role"] = cat.lower().strip() if cat else "unknown"
 
-        for e in edges:
-            src = e["data"]["source"]
-            tgt = e["data"]["target"]
-            src_tier = device_tier.get(src, 5)
-            tgt_tier = device_tier.get(tgt, 5)
+        print("[DB] Tier assignments:")
+        for ip, tier in device_tier.items():
+            d = device_map.get(ip)
+            cat = d.category_obj.name if d and d.category_obj else "?"
+            print(f"  {ip} | category={cat} | tier={tier}")
 
+        edges = []
+        for link in links:
+            if not link.destination_ip:
+                continue
+
+            src_ip = link.source_ip
+            tgt_ip = link.destination_ip
+            src = device_map.get(src_ip)
+            dst = device_map.get(tgt_ip)
+            src_tier = device_tier.get(src_ip, 5)
+            tgt_tier = device_tier.get(tgt_ip, 5)
+
+            # Relationship by tier — never flip source/target, respect DB direction
             if src_tier < tgt_tier:
-                e["data"]["relationship"] = "child"
+                relationship = "child"
             elif src_tier == tgt_tier:
-                e["data"]["relationship"] = "link"
+                relationship = "link"
             else:
-                e["data"]["source"], e["data"]["target"] = tgt, src
-                e["data"]["relationship"] = "child"
+                relationship = "child"  # reverse direction child, kept as-is
 
-        from collections import deque
-        in_edges = {}
-        for e in edges:
-            if e["data"]["relationship"] == "child":
-                t = e["data"]["target"]
-                s = e["data"]["source"]
-                in_edges.setdefault(t, []).append(s)
-        roots = [n["data"]["id"] for n in nodes if n["data"]["id"] not in in_edges]
-        visited = set()
-        queue = deque()
-        for r in roots:
-            queue.append(r)
-            visited.add(r)
-        while queue:
-            current = queue.popleft()
-            for e in edges:
-                if e["data"]["relationship"] == "child" and e["data"]["source"] == current and e["data"]["target"] not in in_edges:
-                    if e["data"]["target"] not in visited:
-                        visited.add(e["data"]["target"])
-                        queue.append(e["data"]["target"])
-        for e in edges:
-            if e["data"]["relationship"] == "":
-                e["data"]["relationship"] = "link"
+            # Status: always "true"/"false" string for Cytoscape CSS selectors
+            status_str = "true" if link.status else "false"
+
+            last_check_str = link.last_checked.strftime("%Y-%m-%d %H:%M:%S") if link.last_checked else ""
+
+            edge = {
+                "data": {
+                    "id": f"link-{link.id}",
+                    "source": src_ip,
+                    "target": tgt_ip,
+                    "label": link.remark or "",
+                    "status": status_str,          # "true" = green, "false" = red
+                    "relationship": relationship,
+                    "link_type": link.link_type or "",
+                    "bandwidth": link.bandwidth or "",
+                    "source_location": src.location if src else "",
+                    "destination_location": dst.location if dst else "",
+                    "source_device_name": src.device_name if src else "",
+                    "destination_device_name": dst.device_name if dst else "",
+                    "last_checked": last_check_str,
+                    "latency_ms": link.latency_ms,
+                }
+            }
+            edges.append(edge)
+
+            print(f"  EDGE id=link-{link.id} | {src_ip}(t{src_tier}) -> {tgt_ip}(t{tgt_tier}) | rel={relationship} | status={status_str}")
 
         elapsed = _time.perf_counter() - t0
-        print(f"[DB] get_ip_topology() -> {len(nodes)} nodes, {len(edges)} edges ({elapsed:.3f}s)")
+        print(f"[DB] get_ip_topology() -> DONE: {len(nodes)} nodes, {len(edges)} edges ({elapsed:.3f}s)")
         return {"nodes": nodes, "edges": edges}
     finally:
         session.close()
-
-
 # Backward-compatible alias
 get_topology = get_ip_topology
 

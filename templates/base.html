@@ -43,6 +43,11 @@ body {
 {% block head %}{% endblock %}
 </head>
 <body>
+<!-- Global user role for frontend RBAC checks -->
+<script>
+    window.USER_ROLE = "{{ user_role }}";
+    window.IS_ADMIN = {{ 'true' if is_admin else 'false' }};
+</script>
 
 {% include 'sidebar.html' %}
 

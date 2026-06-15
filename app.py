@@ -98,6 +98,35 @@ def require_api_key(f):
         return jsonify({"error": "Unauthorized"}), 401
     return decorated
 
+
+def admin_required(f):
+    """Decorator to restrict access to admin users only."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not current_user.is_authenticated:
+            return jsonify({"error": "Unauthorized"}), 401
+        if current_user.role != "admin":
+            return jsonify({"error": "Forbidden"}), 403
+        return f(*args, **kwargs)
+    return wrapper
+
+
+def audit_log(action):
+    """Log admin actions to audit_log table."""
+    try:
+        s = SessionLocal()
+        from db.models import AuditLog
+        log_entry = AuditLog(
+            username=current_user.user,
+            action=action
+        )
+        s.add(log_entry)
+        s.commit()
+    except Exception as e:
+        app.logger.error(f"Failed to write audit log: {e}")
+    finally:
+        s.close()
+
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "/"
@@ -106,6 +135,20 @@ login_manager.login_view = "/"
 @app.context_processor
 def inject_csrf_token():
     return dict(csrf_token=session.get("csrf_token", ""))
+
+
+@app.context_processor
+def inject_user_role():
+    """Inject user role and admin status to all templates."""
+    if current_user.is_authenticated:
+        return {
+            "user_role": current_user.role,
+            "is_admin": current_user.role == "admin"
+        }
+    return {
+        "user_role": "viewer",
+        "is_admin": False
+    }
 
 
 @login_manager.user_loader
@@ -167,7 +210,8 @@ def create_default_admin():
             admin = User(
                 user=admin_user,
                 passwd=generate_password_hash(admin_pass),
-                must_change_password=False
+                must_change_password=False,
+                role="admin"
             )
             s.add(admin)
             s.commit()
@@ -361,6 +405,10 @@ def upload_devices_template():
 @app.route("/devices/upload", methods=["GET", "POST"])
 @login_required
 def upload_devices():
+    if current_user.role != "admin":
+        flash("Only administrators can upload devices")
+        return redirect("/devices")
+    
     if request.method == "POST":
         file = request.files.get("file")
 
@@ -479,6 +527,7 @@ def upload_devices():
                         app.logger.exception("Failed to add link")
                         link_errors.append(f"Row {idx}: Unexpected error - {e}")
 
+                audit_log(f"Uploaded {len(added_devices)} devices and {added_links} links")
                 flash(f"Added {len(added_devices)} devices")
                 flash(f"Added {added_links} network links")
 
@@ -522,6 +571,11 @@ def devices():
     edit = get_device_by_ip(edit_ip) if edit_ip else None
 
     if request.method == "POST":
+        # Restrict device creation/editing to admins
+        if current_user.role != "admin":
+            flash("Only administrators can manage devices")
+            return redirect("/devices")
+
         device_name = request.form.get("device_name", "").strip()
         ip = request.form.get("ip", "").strip()
         model = request.form.get("model", "").strip()
@@ -531,12 +585,14 @@ def devices():
 
         if edit:
             update_device(ip, device_name=device_name, model=model, category=category, location=location)
+            audit_log(f"Updated device {ip}")
             invalidate_cache_for("topology")
             flash("Device updated")
         elif existing:
             flash("Device with this IP already exists")
         else:
             add_device(device_name=device_name or ip, ip=ip, model=model, category=category, location=location)
+            audit_log(f"Added device {ip}")
             invalidate_cache_for("topology")
             flash("Device added")
         return redirect("/devices")
@@ -574,12 +630,17 @@ def devices():
 @app.route("/devices/delete/<ip>")
 @login_required
 def delete_device_page(ip):
+    if current_user.role != "admin":
+        flash("Only administrators can delete devices")
+        return redirect("/devices")
+    
     result = delete_device(ip)
     if isinstance(result, Exception):
         flash(f"Error deleting device: {result}")
     elif result is False:
         flash("Device not found")
     else:
+        audit_log(f"Deleted device {ip}")
         invalidate_cache_for("topology")
         flash("Device deleted")
     return redirect("/devices")
@@ -622,15 +683,25 @@ def links_route():
     delete_id = request.args.get("delete", type=int)
 
     if delete_id:
+        if current_user.role != "admin":
+            flash("Only administrators can delete links")
+            return redirect("/links")
+        
         result = delete_link(delete_id)
         if isinstance(result, Exception):
             flash(f"Error deleting link: {result}")
         else:
+            audit_log(f"Deleted link {delete_id}")
             invalidate_cache_for("topology")
             flash("Link deleted")
         return redirect("/links")
 
     if request.method == "POST":
+        # Restrict link editing to admins
+        if current_user.role != "admin":
+            flash("Only administrators can manage links")
+            return redirect("/links")
+        
         # ── Handle "set location" step for a pending new device ──
         if request.form.get("_action") == "set_location":
             ip_to_set    = request.form.get("_pending_ip", "").strip()
@@ -698,6 +769,7 @@ def links_route():
             if isinstance(result, Exception):
                 flash(f"Error adding link: {result}")
             else:
+                audit_log(f"Added link {src} → {dst or 'Unlinked'}")
                 invalidate_cache_for("topology")
                 flash(f"Link {src} → {dst or 'Unlinked'} added.")
 
@@ -737,21 +809,11 @@ def links_route():
             flash(f"Source IP: {err_src}")
             return redirect("/links")
 
-        # Validate source category
-        if not source_category:
-            flash("Source category is required")
-            return redirect("/links")
-
         # Validate destination IP (optional)
         if destination_ip:
             valid_dst, err_dst = is_valid_ip(destination_ip)
             if not valid_dst:
                 flash(f"Destination IP: {err_dst}")
-                return redirect("/links")
-
-            # Validate destination category when destination IP is provided
-            if not destination_category:
-                flash("Destination category is required")
                 return redirect("/links")
 
         if destination_ip and source_ip == destination_ip:
@@ -785,6 +847,7 @@ def links_route():
             if isinstance(result, Exception):
                 flash(f"Error updating link: {result}")
             else:
+                audit_log(f"Updated link {link_id}")
                 invalidate_cache_for("topology")
                 flash("Link updated")
             return redirect("/links")
@@ -845,6 +908,7 @@ def links_route():
         if isinstance(result, Exception):
             flash(f"Error adding link: {result}")
         else:
+            audit_log(f"Added link {source_ip} → {destination_ip or 'Unlinked'}")
             invalidate_cache_for("topology")
             flash("Link added")
         return redirect("/links")
@@ -1102,6 +1166,7 @@ def get_dashboard_state_api():
 
 @app.route("/api/dashboard-state", methods=["POST"])
 @login_required
+@admin_required
 @require_api_key
 def save_dashboard_state_api():
     data = request.get_json(silent=True) or {}
@@ -1115,6 +1180,7 @@ def save_dashboard_state_api():
     )
     if isinstance(result, Exception):
         return jsonify({"error": str(result)}), 500
+    audit_log("Saved dashboard layout state")
     state = get_dashboard_state()
     socketio.emit("dashboard_updated", state)
     return jsonify({"status": "saved"})
@@ -1130,7 +1196,7 @@ def logout():
 @app.route("/admin/users", methods=["GET", "POST"])
 @login_required
 def admin_users():
-    if current_user.user != "admin":
+    if current_user.role != "admin":
         flash("Access denied")
         return redirect("/dashboard")
 
@@ -1140,17 +1206,37 @@ def admin_users():
             username = request.form.get("username", "").strip()
             password = request.form.get("password", "").strip()
             must_change = request.form.get("must_change_password") == "on"
+            role = request.form.get("role", "viewer").strip()
+            
+            # Validate role
+            if role not in ("admin", "viewer"):
+                flash("Invalid role selected")
+                return redirect("/admin/users")
+            
             if not username or not password:
                 flash("Username and password are required")
             elif len(password) < 4:
                 flash("Password must be at least 4 characters")
             else:
                 ok, msg = create_user(username, password, must_change)
+                # Set the role after user creation
+                if ok:
+                    s = SessionLocal()
+                    try:
+                        user = s.query(User).filter_by(user=username).first()
+                        if user:
+                            user.role = role
+                            s.commit()
+                            audit_log(f"Created user {username} with role {role}")
+                    finally:
+                        s.close()
                 flash(msg)
         elif action == "delete":
             user_id = request.form.get("user_id", type=int)
             if user_id and user_id != current_user.id:
                 ok, msg = delete_user(user_id)
+                if ok:
+                    audit_log(f"Deleted user ID {user_id}")
                 flash(msg)
             elif user_id == current_user.id:
                 flash("Cannot delete yourself")
@@ -1161,7 +1247,34 @@ def admin_users():
                 flash("Password must be at least 4 characters")
             elif user_id:
                 ok, msg = reset_user_password(user_id, new_password)
+                if ok:
+                    audit_log(f"Reset password for user ID {user_id}")
                 flash(msg)
+        elif action == "update_role":
+            user_id = request.form.get("user_id", type=int)
+            new_role = request.form.get("new_role", "viewer").strip()
+            
+            if new_role not in ("admin", "viewer"):
+                flash("Invalid role selected")
+            elif user_id == current_user.id:
+                flash("Cannot change your own role")
+            elif user_id:
+                s = SessionLocal()
+                try:
+                    user = s.query(User).filter_by(id=user_id).first()
+                    if user:
+                        old_role = user.role
+                        user.role = new_role
+                        s.commit()
+                        audit_log(f"Updated user {user.user} role from {old_role} to {new_role}")
+                        flash(f"User role updated to {new_role}")
+                    else:
+                        flash("User not found")
+                except Exception as e:
+                    s.rollback()
+                    flash(f"Error updating role: {e}")
+                finally:
+                    s.close()
         return redirect("/admin/users")
 
     users = get_all_users()

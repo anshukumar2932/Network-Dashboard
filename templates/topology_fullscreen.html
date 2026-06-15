@@ -8,7 +8,8 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+<script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+<script src="https://unpkg.com/cytoscape-elk@2.1.0/dist/cytoscape-elk.umd.js"></script>
 <script src="https://unpkg.com/cytoscape-navigator/cytoscape-navigator.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
@@ -196,6 +197,21 @@ html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:
 (function () {
     'use strict';
 
+    /* Register ELK layout engine with Cytoscape - handle different export names */
+    try {
+        if (typeof CytoscapeELK !== 'undefined') {
+            cytoscape.use(CytoscapeELK);
+            console.log('[TOPOLOGY] ELK plugin registered');
+        } else if (typeof window.CytoscapeELK !== 'undefined') {
+            cytoscape.use(window.CytoscapeELK);
+            console.log('[TOPOLOGY] ELK plugin registered from window');
+        } else {
+            console.warn('[TOPOLOGY] ELK plugin not found - layout will use fallback');
+        }
+    } catch (e) {
+        console.error('[TOPOLOGY] Error registering ELK:', e);
+    }
+
     let cy = null;
     let ctxNode = null;
     let saveTimer = null;
@@ -254,32 +270,33 @@ html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:
         }},
         { selector: 'node.hidden-child', style: { 'display':'none' } },
         { selector: 'edge.hidden-edge', style: { 'display':'none' } },
+        { selector: 'node.virtual-root', style: { 'display':'none' } },
         { selector: 'node.hovered', style: {
             'border-color':'#2563eb','border-width':'4px','border-style':'solid',
             'width':'52px','height':'52px','shadow-blur':16,'shadow-color':'rgba(37,99,235,.3)'
         }},
         { selector: 'node:selected', style: { 'border-color':'#2563eb','border-width':'4px','border-style':'solid' } },
         { selector: 'edge[relationship="child"]', style: {
-            'curve-style':'bezier','width':2,'line-color':'#cbd5e1',
+            'curve-style':'bezier','width':3,'line-color':'#cbd5e1',
             'target-arrow-shape':'triangle','target-arrow-color':'#cbd5e1',
-            'arrow-scale':0.8,'label':'','overlay-padding':4
+            'arrow-scale':0.8,'label':'','overlay-padding':4,'opacity':0.8
         }},
         { selector: 'edge[relationship="child"][status="true"]', style: {
-            'line-color':'#22c55e','target-arrow-color':'#22c55e','width':2
+            'line-color':'#22c55e','target-arrow-color':'#22c55e','width':3,'opacity':1.0
         }},
         { selector: 'edge[relationship="child"][status="false"]', style: {
-            'line-color':'#ef4444','target-arrow-color':'#ef4444','line-style':'dashed','width':2
+            'line-color':'#ef4444','target-arrow-color':'#ef4444','line-style':'dashed','width':3,'opacity':1.0
         }},
         { selector: 'edge[relationship="link"]', style: {
-            'curve-style':'bezier','line-style':'dotted','opacity':0.35,'width':1.2,
+            'curve-style':'bezier','line-style':'dotted','opacity':0.6,'width':2,
             'target-arrow-shape':'triangle','target-arrow-color':'#94a3b8',
             'arrow-scale':0.6,'label':'','line-color':'#94a3b8'
         }},
         { selector: 'edge[relationship="link"][status="true"]', style: {
-            'line-color':'#22c55e','target-arrow-color':'#22c55e'
+            'line-color':'#22c55e','target-arrow-color':'#22c55e','opacity':0.8,'width':2
         }},
         { selector: 'edge[relationship="link"][status="false"]', style: {
-            'line-color':'#ef4444','target-arrow-color':'#ef4444','line-style':'dashed'
+            'line-color':'#ef4444','target-arrow-color':'#ef4444','line-style':'dashed','opacity':0.8,'width':2
         }},
         { selector: 'edge', style: {
             'curve-style':'bezier','width':2,'line-color':'#94a3b8',
@@ -297,6 +314,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:
         const nodes = [...(rawData.nodes || [])];
         const edges = [...(rawData.edges || [])];
         const roots = findRoots(nodes, edges);
+        
+        /* DEBUG: Print roots to verify edge direction */
+        console.log('[TOPOLOGY] ROOTS:', roots.map(r => r.data.id));
+        
         let virtualRootId = null;
         if (roots.length > 1) {
             virtualRootId = '__virtual_root__';
@@ -475,7 +496,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:
                 return;
             }
             child.addClass('hidden-child');
-            cy.connectedEdges(`[source="${cid}"],[target="${cid}"]`).forEach(e => e.addClass('hidden-edge'));
+            cy.edges().filter(e => (e.data('source') === cid || e.data('target') === cid)).forEach(e => e.addClass('hidden-edge'));
         });
     }
 
@@ -668,8 +689,18 @@ html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:
             boxSelectionEnabled: false,
             layout: { name: 'preset' },
             elements: {
-                nodes: prep.nodes.map(n => ({ data: n.data, position: treePos[n.data.id] || { x: 400, y: 300 } })),
-                edges: prep.edges.map(e => ({ data: { ...e.data, status: String(e.data.status), relationship: e.data.relationship || 'child' } }))
+                nodes: prep.allNodes.map(n => ({ 
+                    data: n.data, 
+                    position: treePos[n.data.id] || { x: 400, y: 300 },
+                    classes: n.data.id === prep.virtualRootId ? 'virtual-root' : ''
+                })),
+                edges: prep.allEdges.map(e => ({ 
+                    data: { 
+                        ...e.data, 
+                        status: String(e.data.status === true || e.data.status === 'true'), 
+                        relationship: e.data.relationship || 'child' 
+                    } 
+                }))
             }
         });
 
@@ -690,42 +721,95 @@ html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:
             savedState.collapsed.forEach(nid => collapseNode(nid));
         }
 
+        /* CLEAN LOGIC: If layout was locked, skip ELK and restore saved state */
         if (savedState && savedState.layout_locked) {
+            /* Restore saved positions and lock state (no ELK needed) */
+            const savedPos = savedState.node_positions;
+            if (savedPos && Object.keys(savedPos).length) {
+                cy.nodes().forEach(n => { if (savedPos[n.id()]) n.position(savedPos[n.id()]); });
+                console.log('[TOPOLOGY] Restored locked positions from saved state');
+            }
+
             layoutLocked = true;
             applyLockState();
-        }
+            console.log('[TOPOLOGY] Layout is LOCKED (skipped ELK)');
 
-        /* Restore viewport only when layout is locked */
-        if (savedState && savedState.layout_locked && typeof savedState.zoom === 'number' && savedState.zoom > 0) {
-            cy.zoom(savedState.zoom);
-            cy.pan({ x: savedState.pan_x || 0, y: savedState.pan_y || 0 });
+            /* Restore viewport */
+            if (typeof savedState.zoom === 'number' && savedState.zoom > 0) {
+                cy.zoom(savedState.zoom);
+                cy.pan({ x: savedState.pan_x || 0, y: savedState.pan_y || 0 });
+                console.log('[TOPOLOGY] Viewport restored from locked state');
+            } else {
+                cy.fit(40);
+                cy.center();
+            }
         } else {
-            /* Use breadthfirst tree layout instead of Dagre */
-            let usedLayout = false;
+            /* Layout is unlocked: Run ELK to establish proper hierarchy */
             try {
-                const layoutDone = new Promise((resolve, reject) => {
-                    cy.one('layoutstop', () => resolve());
+                await new Promise((resolve, reject) => {
+                    cy.one('layoutstop', () => resolve(true));
                     cy.one('layouterror', (e) => reject(e));
                     cy.layout({
-                        name: 'breadthfirst',
-                        directed: true,
-                        circle: false,
-                        spacingFactor: 2,
-                        avoidOverlap: true,
-                        nodeSep: 100,
-                        animate: false,
+                        name: 'elk',
+                        elk: {
+                            'elk.algorithm': 'layered',
+                            'elk.direction': 'DOWN',
+                            'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+                            'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+                            'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+                            'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+                            'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED'
+                        },
                         fit: true,
+                        animate: false,
                         padding: 50
                     }).run();
                 });
-                await layoutDone;
-                usedLayout = true;
+                console.log('[TOPOLOGY] ELK layered layout applied on initial load (DOWN direction with hierarchy enforcement)');
+                
+                /* DEBUG: Print all node positions and depths */
+                console.log('[TOPOLOGY] Node hierarchy after ELK layout:');
+                cy.nodes().filter(n => n.data('id') !== '__virtual_root__').forEach(n => {
+                    console.log(
+                        '  ',
+                        n.id().padEnd(20),
+                        'depth=' + getNodeDepth(n.id()),
+                        'y=' + Math.round(n.position().y),
+                        'x=' + Math.round(n.position().x)
+                    );
+                });
+                
+                /* DEBUG: Print root nodes */
+                const roots = cy.nodes().filter(n => getParentIds(n.id()).size === 0 && n.data('id') !== '__virtual_root__');
+                console.log('[TOPOLOGY] Root nodes:', roots.map(n => n.id()));
             } catch (err) {
-                console.warn('Breadthfirst layout failed:', err);
+                console.error('[TOPOLOGY] ELK layout failed on load, using Dagre fallback', err);
+                /* Fallback to Dagre if ELK fails */
+                try {
+                    await new Promise((resolve, reject) => {
+                        cy.one('layoutstop', () => resolve(true));
+                        cy.one('layouterror', (e) => reject(e));
+                        cy.layout({
+                            name: 'dagre',
+                            rankDir: 'TB',
+                            rankSep: 150,
+                            nodeSep: 100,
+                            edgeSep: 60,
+                            fit: true,
+                            animate: false,
+                            padding: 50
+                        }).run();
+                    });
+                    console.log('[TOPOLOGY] Dagre layout applied as fallback');
+                } catch (err2) {
+                    console.error('[TOPOLOGY] Dagre also failed', err2);
+                    cy.fit(40);
+                    cy.center();
+                }
             }
-            if (!usedLayout) { cy.fit(40); cy.center(); }
-            persistState();
         }
+
+        persistState();
 
         document.getElementById('legendBox').style.display = 'block';
         updateInfo();
@@ -998,55 +1082,58 @@ html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:
     document.getElementById('expandAllBtn').addEventListener('click', expandAll);
     document.getElementById('collapseAllBtn').addEventListener('click', collapseAll);
     document.getElementById('resetLayoutBtn').addEventListener('click', async () => {
-        if(!cy) return;
-        suppressSave = true;
+    if (layoutLocked) {
+        alert('Layout is locked. Unlock layout before running Auto Adjust.');
+        return;
+    }
+    if (!cy) return;
+    suppressSave = true;
 
-        /* Clear saved positions on server */
-        try {
-            await fetch('/api/dashboard-state', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-                body: JSON.stringify({
-                    zoom: 1, pan_x: 0, pan_y: 0,
-                    collapsed: [],
-                    node_positions: {},
-                    layout_locked: false
-                })
-            });
-        } catch(ex) { /* ignore */ }
+    try {
+        // STEP 1: Clear all collapse/hide state BEFORE running ELK
+        collapsedNodes.clear();
+        cy.nodes().removeClass('collapsed hidden-child collapsed-child');
+        cy.edges().removeClass('hidden-edge');
+        cy.nodes().forEach(n => n.data('hiddenCount', 0));
 
-        /* Force Dagre layout on current graph */
-        cy.nodes().forEach(n => { n.removeData('position'); });
+        // STEP 2: Run ELK on fully-visible graph
+        await new Promise((resolve, reject) => {
+            cy.one('layoutstop', resolve);
+            cy.one('layouterror', reject);
+            cy.layout({
+                name: 'elk',
+                elk: {
+                    'elk.algorithm': 'layered',
+                    'elk.direction': 'DOWN',
+                    'elk.spacing.nodeNode': '80',
+                    'elk.layered.spacing.nodeNodeBetweenLayers': '160',
+                    'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+                    'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+                },
+                fit: true,
+                padding: 50,
+                animate: true,
+                animationDuration: 500
+            }).run();
+        });
+
+        console.log('[TOPOLOGY] Auto Adjust complete');
+        persistState();
+
+    } catch (err) {
+        console.error('[TOPOLOGY] ELK failed during Auto Adjust', err);
+        // Dagre fallback
         try {
             await new Promise((resolve, reject) => {
-                cy.one('layoutstop', () => resolve());
-                cy.one('layouterror', (e) => reject(e));
-                cy.layout({
-                    name: 'dagre',
-                    rankDir: 'TB',
-                    rankSep: 180,
-                    nodeSep: 150,
-                    edgeSep: 60,
-                    animate: true,
-                    fit: true,
-                    padding: 40
-                }).run();
+                cy.one('layoutstop', resolve);
+                cy.one('layouterror', reject);
+                cy.layout({ name: 'dagre', rankDir: 'TB', rankSep: 160, nodeSep: 100, fit: true, animate: true, animationDuration: 500 }).run();
             });
-        } catch(err) {
-            console.warn('Dagre failed, using tree positions:', err);
-            const treePos = buildTreePositions(
-                cy.nodes().map(n => ({ data: { id: n.id() } })),
-                cy.edges().map(e => ({ data: { source: e.data('source'), target: e.data('target'), relationship: e.data('relationship') } }))
-            );
-            cy.nodes().forEach(n => { if (treePos[n.id()]) n.position(treePos[n.id()]); });
-            cy.fit(40);
-        }
-
-        setTimeout(() => {
-            suppressSave = false;
-            persistState();
-        }, 500);
-    });
+        } catch {}
+    } finally {
+        suppressSave = false;
+    }
+});
     document.getElementById('lockLayoutBtn').addEventListener('click', () => {
         if (!cy) return;
         layoutLocked = !layoutLocked;
