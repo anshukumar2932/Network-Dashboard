@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}{{ device.device_name }} - Network Monitor{% endblock %}
+{% block extra_head %}
+<style>
+.kpi-card { background:#fff; border-radius:16px; padding:20px; border:1px solid #e2e8f0; text-align:center; }
+.kpi-card .number { font-size:32px; font-weight:700; color:#0f172a; }
+.kpi-card .label { color:#64748b; font-size:14px; }
+</style>
+{% endblock %}
+{% block content %}
+<a href="javascript:history.back()" class="btn btn-outline-secondary btn-sm mb-3">&larr; Back</a>
+<h2 class="mb-4">{{ device.device_name or device.ip }}</h2>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="kpi-card">
+            <div class="number">{{ device.ip }}</div>
+            <div class="label">IP Address</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card">
+            <div class="number">{{ device.location }}</div>
+            <div class="label">Location</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card">
+            <div class="number">{{ device.model }}</div>
+            <div class="label">Model</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card">
+            <div class="number text-{{ 'success' if device.status else 'danger' }}">
+                {{ "UP" if device.status else "DOWN" }}
+            </div>
+            <div class="label">Status</div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h5 class="mb-3">Links ({{ links|length }})</h5>
+    {% if links %}
+    <table class="table table-hover mb-0">
+        <thead><tr><th>Connected Device</th><th>Location</th><th>Status</th></tr></thead>
+        <tbody>
+            {% for link in links %}
+            <tr>
+                <td><a href="/device/{{ link.other_ip }}">{{ link.other_device_name or link.other_ip }}</a></td>
+                <td>{{ link.other_location }}</td>
+                <td>
+                    {% if link.status %}
+                    <span class="badge bg-success">UP</span>
+                    {% else %}
+                    <span class="badge bg-danger">DOWN</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3" class="text-muted">No links.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted mb-0">No links for this device.</p>
+    {% endif %}
+</div>
+{% endblock %}

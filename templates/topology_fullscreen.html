@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="{{ csrf_token }}">
+<title>Network Topology — Fullscreen</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+<script src="https://unpkg.com/cytoscape-navigator/cytoscape-navigator.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:'Inter',system-ui,sans-serif;}
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:#334155;border-radius:6px;}
+
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes popIn{0%{transform:scale(.85);opacity:0}100%{transform:scale(1);opacity:1}}
+@keyframes glowBadge{0%,100%{box-shadow:0 0 4px rgba(239,68,68,.3)}50%{box-shadow:0 0 16px rgba(239,68,68,.7)}}
+
+.fs-toolbar{position:fixed;top:12px;right:12px;z-index:999;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;}
+.fs-btn{background:rgba(15,23,42,.85);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.15);border-radius:30px;color:#e2e8f0;font-size:12px;font-weight:600;padding:6px 14px;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .15s;}
+.fs-btn:hover{background:rgba(30,41,59,.95);border-color:rgba(255,255,255,.3);color:#fff;}
+.fs-btn.exit{border-color:rgba(239,68,68,.4);color:#fca5a5;}
+.fs-btn.exit:hover{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.6);color:#fff;}
+.fs-btn.active-lock{border-color:rgba(239,68,68,.5);color:#fca5a5;background:rgba(239,68,68,.1);}
+
+.fs-search{position:fixed;top:12px;left:12px;z-index:999;display:flex;gap:6px;align-items:center;}
+.fs-search input{background:rgba(15,23,42,.85);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.15);border-radius:30px;color:#e2e8f0;font-size:12px;font-weight:500;padding:6px 14px 6px 32px;width:220px;outline:none;transition:all .15s;}
+.fs-search input:focus{border-color:rgba(59,130,246,.6);width:280px;}
+.fs-search input::placeholder{color:#64748b;}
+.fs-search i{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#64748b;font-size:12px;pointer-events:none;}
+
+.fs-info{position:fixed;bottom:12px;left:12px;z-index:999;background:rgba(15,23,42,.85);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:8px 14px;color:#94a3b8;font-size:11px;display:flex;align-items:center;gap:12px;}
+.fs-info .dot{width:6px;height:6px;border-radius:50%;}
+.fs-info .dot.up{background:#22c55e;}
+.fs-info .dot.down{background:#ef4444;}
+
+#cy{
+    width:100%;
+    height:100%;
+    background-color:#ffffff;
+    background-image:
+        linear-gradient(rgba(148,163,184,.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148,163,184,.08) 1px, transparent 1px);
+    background-size:40px 40px;
+    display:none;
+}
+#loading{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:14px;gap:12px;flex-direction:column;}
+.spinner{width:26px;height:26px;border:3px solid #1e293b;border-top-color:#3b82f6;border-radius:50%;animation:spin .7s linear infinite;}
+
+.node-tooltip{position:fixed;display:none;z-index:99990;background:rgba(10,18,28,.97);color:#fff;border-radius:16px;padding:14px 18px;font-size:13px;line-height:1.6;min-width:240px;max-width:290px;box-shadow:0 20px 40px -10px rgba(0,0,0,.5);pointer-events:none;border:1px solid rgba(255,255,255,.1);animation:popIn .12s ease;}
+.tt-title{font-weight:700;font-size:14px;margin-bottom:8px;color:#ffd966;display:flex;align-items:center;gap:7px;}
+.tt-divider{height:1px;background:rgba(255,255,255,.1);margin:6px 0;}
+.tt-row{display:flex;justify-content:space-between;gap:14px;margin-top:3px;}
+.tt-label{color:#7fa3c4;font-size:11px;white-space:nowrap;}
+.tt-value{color:#e2ecf7;font-weight:500;font-size:11px;text-align:right;word-break:break-all;}
+.tt-status{display:inline-flex;align-items:center;gap:5px;font-weight:700;font-size:12px;}
+.tt-children{margin-top:8px;padding:6px 9px;background:rgba(59,130,246,.18);border-radius:8px;font-size:11px;color:#93c5fd;display:flex;align-items:center;gap:6px;}
+.tt-hint{margin-top:6px;padding:5px 8px;background:rgba(255,255,255,.06);border-radius:7px;font-size:10px;color:#94a3b8;}
+
+.ctx-menu{position:fixed;background:rgba(15,23,42,.97);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:5px 3px;font-size:13px;z-index:99999;min-width:200px;box-shadow:0 12px 30px rgba(0,0,0,.4);display:none;animation:popIn .12s ease;}
+.ctx-ip-header{padding:8px 14px 5px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ctx-menu-sep{height:1px;background:rgba(255,255,255,.08);margin:4px 8px;}
+.ctx-menu-item{padding:8px 14px;cursor:pointer;border-radius:8px;display:flex;align-items:center;gap:9px;color:#e2e8f0;transition:background .13s;user-select:none;}
+.ctx-menu-item:hover{background:rgba(255,255,255,.08);}
+.ctx-menu-item i{width:16px;text-align:center;font-size:13px;}
+.ctx-menu-item.ctx-expand i{color:#22c55e;}
+.ctx-menu-item.ctx-collapse i{color:#f59e0b;}
+.ctx-menu-item.ctx-hide i{color:#ef4444;}
+.ctx-menu-item.ctx-focus i{color:#3b82f6;}
+.ctx-menu-item.ctx-detail i{color:#8b5cf6;}
+
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9998;display:none;align-items:center;justify-content:center;}
+.modal-overlay.show{display:flex;}
+.modal-box{background:rgba(15,23,42,.97);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.12);border-radius:22px;padding:22px 26px;max-width:530px;width:93%;max-height:82vh;overflow-y:auto;position:relative;box-shadow:0 28px 55px rgba(0,0,0,.4);animation:popIn .15s ease;color:#e2e8f0;}
+.modal-close{position:absolute;top:14px;right:18px;background:none;border:none;font-size:22px;cursor:pointer;color:#64748b;line-height:1;}
+.modal-close:hover{color:#fff;}
+
+.legend-box{position:absolute;bottom:14px;left:14px;background:rgba(15,23,42,.9);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:11px 15px;font-size:12px;z-index:500;box-shadow:0 4px 18px rgba(0,0,0,.3);display:block;min-width:172px;color:#e2e8f0;}
+.leg-title{font-weight:700;margin-bottom:8px;font-size:12px;color:#e2e8f0;display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none;}
+.legend-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;color:#cbd5e1;font-size:12px;line-height:1.4;}
+.leg-dot{display:inline-block;width:11px;height:11px;border-radius:50%;flex-shrink:0;}
+.leg-line{display:inline-block;width:24px;height:4px;flex-shrink:0;border-radius:2px;}
+.leg-sep{height:1px;background:rgba(255,255,255,.1);margin:6px 0;}
+.legend-box.collapsed #legendContent{display:none;}
+.legend-box.collapsed .leg-title{margin-bottom:0;}
+
+
+.sync-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25);border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;opacity:0;transition:opacity .4s;}
+.sync-badge.show{opacity:1;}
+
+#pingFlash{position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:99999;display:none;background:#16a34a;color:white;padding:14px 18px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.2);font-weight:600;}
+
+.kpi-row{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:999;display:flex;gap:10px;}
+.kpi-card{background:rgba(15,23,42,.85);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:8px 18px;text-align:center;min-width:90px;}
+.kpi-card .number{font-size:22px;font-weight:800;color:#e2e8f0;line-height:1.2;}
+.kpi-card .label{color:#94a3b8;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-top:2px;}
+.kpi-card.up .number{color:#22c55e;}
+.kpi-card.down .number{color:#ef4444;}
+
+.alert-panel{position:fixed;top:56px;left:12px;z-index:999;background:rgba(15,23,42,.9);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:10px 14px;max-width:280px;max-height:200px;overflow-y:auto;display:none;color:#e2e8f0;font-size:12px;}
+.alert-panel.show{display:block;}
+.alert-item{padding:6px 10px;border-radius:8px;margin-bottom:4px;background:rgba(249,115,22,.1);border-left:3px solid #f97316;font-size:12px;color:#fcd34d;}
+.alert-panel .alert-head{font-weight:700;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;}
+</style>
+</head>
+<body>
+
+<div class="fs-search">
+    <i class="fas fa-search"></i>
+    <input type="text" id="searchInput" placeholder="Search IP or name…" />
+</div>
+
+<div class="fs-toolbar">
+    <span class="sync-badge" id="syncBadge"><i class="fas fa-check-circle"></i> Saved</span>
+    <button class="fs-btn" id="fitBtn"><i class="fas fa-expand-alt"></i> Fit</button>
+    <button class="fs-btn" id="expandAllBtn"><i class="fas fa-plus-square"></i> Expand</button>
+    <button class="fs-btn" id="collapseAllBtn"><i class="fas fa-minus-square"></i> Collapse</button>
+    <button class="fs-btn" id="resetLayoutBtn"><i class="fas fa-redo"></i> Auto Adjust</button>
+    <button class="fs-btn" id="lockLayoutBtn"><i class="fas fa-lock"></i> Lock</button>
+    <button class="fs-btn" id="pingBtn"><i class="fas fa-network-wired"></i> Ping All</button>
+    <button class="fs-btn" id="refreshBtn"><i class="fas fa-sync-alt"></i> Refresh</button>
+    <button class="fs-btn exit" id="exitBtn"><i class="fas fa-times"></i> Exit</button>
+</div>
+
+<div class="kpi-row" id="kpiRow">
+    <div class="kpi-card"><div class="number" id="kpiTotal">—</div><div class="label"><i class="fas fa-network-wired"></i> Devices</div></div>
+    <div class="kpi-card up"><div class="number" id="kpiUp">—</div><div class="label"><i class="fas fa-check-circle"></i> Up</div></div>
+    <div class="kpi-card down"><div class="number" id="kpiDown">—</div><div class="label"><i class="fas fa-exclamation-triangle"></i> Down</div></div>
+</div>
+
+<div class="alert-panel" id="alertPanel">
+    <div class="alert-head"><span><i class="fas fa-bell me-1 text-danger"></i>Alerts</span><span id="alertCount">0</span></div>
+    <div id="alertList"></div>
+</div>
+
+<div id="loading"><div class="spinner"></div><span>Loading topology…</span></div>
+<div id="cy"></div>
+
+<div id="cy-wrap" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;">
+    <div class="legend-box collapsed" id="legendBox" style="pointer-events:auto;">
+        <div class="leg-title" id="legendToggle"><i class="fas fa-layer-group"></i>Legend<i class="fas fa-chevron-right ms-auto" id="legendIcon"></i></div>
+        <div id="legendContent">
+            <div class="legend-row"><span class="leg-dot" style="background:#22c55e;"></span>Online</div>
+            <div class="legend-row"><span class="leg-dot" style="background:#f59e0b;"></span>Partial / Warning</div>
+            <div class="legend-row"><span class="leg-dot" style="background:#ef4444;"></span>Offline / Down</div>
+            <div class="leg-sep"></div>
+            <div class="legend-row"><span class="leg-line" style="background:#22c55e;"></span>Link Up</div>
+            <div class="legend-row"><span class="leg-line" style="background:repeating-linear-gradient(to right,#ef4444 0,#ef4444 5px,transparent 5px,transparent 9px);height:2.5px;"></span>Link Down</div>
+            <div class="leg-sep"></div>
+            <div class="legend-row" style="color:#94a3b8;font-size:11px;"><span style="display:inline-block;width:13px;height:13px;border-radius:50%;border:2px dashed #f59e0b;flex-shrink:0;"></span>Collapsed (has children)</div>
+            <div class="legend-row" style="color:#94a3b8;font-size:11px;"><i class="fas fa-mouse fa-fw" style="color:#3b82f6;"></i>Double-click → expand/collapse</div>
+            <div class="legend-row" style="color:#94a3b8;font-size:11px;"><i class="fas fa-mouse-pointer fa-fw" style="color:#8b5cf6;"></i>Right-click → options</div>
+            <div class="legend-row" style="color:#94a3b8;font-size:11px;"><i class="fas fa-arrows-alt fa-fw" style="color:#3b82f6;"></i>Drag nodes to rearrange</div>
+        </div>
+    </div>
+    <div id="cy-minimap" style="pointer-events:auto;"></div>
+</div>
+
+<div class="node-tooltip" id="nodeTooltip"></div>
+
+<div class="ctx-menu" id="ctxMenu">
+    <div class="ctx-ip-header" id="ctxIpHeader">—</div>
+    <div class="ctx-menu-sep"></div>
+    <div class="ctx-menu-item" id="ctxOpenHTTP"><i class="fas fa-globe" style="color:#3b82f6;"></i>Open HTTP (port 80)</div>
+    <div class="ctx-menu-item" id="ctxOpenHTTPS"><i class="fas fa-lock" style="color:#3b82f6;"></i>Open HTTPS (port 443)</div>
+    <div class="ctx-menu-item" id="ctxPing"><i class="fas fa-satellite-dish" style="color:#3b82f6;"></i>Ping device</div>
+    <div class="ctx-menu-sep"></div>
+    <div class="ctx-menu-item ctx-expand" id="ctxExpand"><i class="fas fa-plus-circle"></i>Expand Node</div>
+    <div class="ctx-menu-item ctx-collapse" id="ctxCollapseNode"><i class="fas fa-minus-circle"></i>Collapse Node</div>
+    <div class="ctx-menu-item ctx-collapse" id="ctxCollapseBranch"><i class="fas fa-sitemap"></i>Collapse Branch</div>
+    <div class="ctx-menu-item ctx-hide" id="ctxHideNode"><i class="fas fa-eye-slash"></i>Hide Node</div>
+    <div class="ctx-menu-item ctx-focus" id="ctxFocusNode"><i class="fas fa-crosshairs"></i>Focus Node</div>
+    <div class="ctx-menu-sep"></div>
+    <div class="ctx-menu-item ctx-detail" id="ctxDetails"><i class="fas fa-info-circle"></i>View full details</div>
+    <div class="ctx-menu-sep"></div>
+    <div class="ctx-menu-item" id="ctxDevicePage"><i class="fas fa-external-link-alt" style="color:#3b82f6;"></i>Open device page</div>
+</div>
+
+<div class="modal-overlay" id="linkModalOverlay">
+    <div class="modal-box">
+        <button class="modal-close" id="modalCloseBtn">&times;</button>
+        <h5 id="linkModalTitle" style="font-size:17px;font-weight:700;margin-bottom:14px;padding-right:30px;color:#e2e8f0;"></h5>
+        <div id="linkModalBody"></div>
+    </div>
+</div>
+
+<div id="pingFlash"></div>
+
+<script>
+(function () {
+    'use strict';
+
+    let cy = null;
+    let ctxNode = null;
+    let saveTimer = null;
+    let layoutLocked = false;
+    let navInstance = null;
+    let suppressSave = false;
+    const collapsedNodes = new Set();
+
+    /* Performance caches — built once during initGraph */
+    let depthMap = null;
+    let childCountMap = null;
+    const childrenMap = new Map();
+    const parentMap = new Map();
+
+    function getCsrfToken() {
+        return document.querySelector('meta[name="csrf-token"]')?.content || '';
+    }
+
+    const CY_STYLE = [
+        { selector: 'node', style: {
+            'label':'data(label)','text-valign':'bottom','text-halign':'center',
+            'font-size':'11px','font-weight':'600','color':'#1e293b',
+            'text-wrap':'wrap','text-max-width':'100px','text-margin-y':'5px',
+            'width':'42px','height':'42px','border-width':'4px','border-color':'#e2e8f0',
+            'border-style':'solid','background-color':'#e2e8f0',
+            'shadow-blur':8,'shadow-color':'rgba(0,0,0,.12)',
+            'shadow-offset-x':0,'shadow-offset-y':2,
+            'transition-property':'border-color,border-width,width,height,border-style',
+            'transition-duration':'0.16s'
+        }},
+        { selector: 'node[status="GREEN"]', style: {
+            'background-color':'#22c55e','border-color':'#16a34a','border-width':3,
+            'color':'#ffffff','font-weight':'700','text-outline-width':2,'text-outline-color':'#16a34a'
+        }},
+        { selector: 'node[status="YELLOW"]', style: {
+            'background-color':'#f59e0b','border-color':'#d97706','border-width':3,
+            'color':'#ffffff','font-weight':'700','text-outline-width':2,'text-outline-color':'#d97706'
+        }},
+        { selector: 'node[status="RED"]', style: {
+            'background-color':'#ef4444','border-color':'#dc2626','border-width':3,
+            'color':'#ffffff','font-weight':'700','text-outline-width':2,'text-outline-color':'#dc2626'
+        }},
+        { selector: 'node.collapsed', style: {
+            'border-color':'#f59e0b','border-width':'5px','border-style':'double',
+            'label': function(ele) {
+                const lbl = ele.data('label') || ele.data('hostname') || ele.data('id') || '';
+                const hiddenCount = ele.data('hiddenCount') || 0;
+                return hiddenCount > 0 ? lbl + '\n' + hiddenCount + ' devices' : lbl;
+            },
+            'font-size':'10px','font-weight':'600','color':'#1e293b',
+            'text-valign':'bottom','text-halign':'center','text-margin-y':'5px',
+            'text-wrap':'wrap','text-max-width':'110px'
+        }},
+        { selector: 'node.collapsed-child', style: {
+            'opacity':0.3,'border-color':'#94a3b8','border-style':'dotted'
+        }},
+        { selector: 'node.hidden-child', style: { 'display':'none' } },
+        { selector: 'edge.hidden-edge', style: { 'display':'none' } },
+        { selector: 'node.hovered', style: {
+            'border-color':'#2563eb','border-width':'4px','border-style':'solid',
+            'width':'52px','height':'52px','shadow-blur':16,'shadow-color':'rgba(37,99,235,.3)'
+        }},
+        { selector: 'node:selected', style: { 'border-color':'#2563eb','border-width':'4px','border-style':'solid' } },
+        { selector: 'edge[relationship="child"]', style: {
+            'curve-style':'bezier','width':2,'line-color':'#cbd5e1',
+            'target-arrow-shape':'triangle','target-arrow-color':'#cbd5e1',
+            'arrow-scale':0.8,'label':'','overlay-padding':4
+        }},
+        { selector: 'edge[relationship="child"][status="true"]', style: {
+            'line-color':'#22c55e','target-arrow-color':'#22c55e','width':2
+        }},
+        { selector: 'edge[relationship="child"][status="false"]', style: {
+            'line-color':'#ef4444','target-arrow-color':'#ef4444','line-style':'dashed','width':2
+        }},
+        { selector: 'edge[relationship="link"]', style: {
+            'curve-style':'bezier','line-style':'dotted','opacity':0.35,'width':1.2,
+            'target-arrow-shape':'triangle','target-arrow-color':'#94a3b8',
+            'arrow-scale':0.6,'label':'','line-color':'#94a3b8'
+        }},
+        { selector: 'edge[relationship="link"][status="true"]', style: {
+            'line-color':'#22c55e','target-arrow-color':'#22c55e'
+        }},
+        { selector: 'edge[relationship="link"][status="false"]', style: {
+            'line-color':'#ef4444','target-arrow-color':'#ef4444','line-style':'dashed'
+        }},
+        { selector: 'edge', style: {
+            'curve-style':'bezier','width':2,'line-color':'#94a3b8',
+            'target-arrow-shape':'triangle','target-arrow-color':'#94a3b8','label':''
+        }}
+    ];
+
+    /* ── Elements ── */
+    function findRoots(nodes, edges) {
+        const childSet = new Set(edges.filter(e => (e.data.relationship || 'child') === 'child').map(e => e.data.target));
+        return nodes.filter(n => !childSet.has(n.data.id));
+    }
+
+    function prepareElements(rawData) {
+        const nodes = [...(rawData.nodes || [])];
+        const edges = [...(rawData.edges || [])];
+        const roots = findRoots(nodes, edges);
+        let virtualRootId = null;
+        if (roots.length > 1) {
+            virtualRootId = '__virtual_root__';
+            nodes.unshift({ data: { id: virtualRootId, label: '', hostname: '', status: 'GREEN', childCount: roots.length } });
+            roots.forEach(r => edges.push({ data: { source: virtualRootId, target: r.data.id, relationship: 'child' } }));
+        } else if (roots.length === 0 && nodes.length > 0) {
+            virtualRootId = '__virtual_root__';
+            nodes.unshift({ data: { id: virtualRootId, label: '', hostname: '', status: 'GREEN', childCount: nodes.length } });
+            nodes.slice(1).forEach(n => edges.push({ data: { source: virtualRootId, target: n.data.id, relationship: 'child' } }));
+        }
+        const hideIds = virtualRootId ? [virtualRootId] : [];
+        return {
+            nodes: nodes.filter(n => !hideIds.includes(n.data.id)),
+            edges: edges.filter(e => !hideIds.includes(e.data.source) && !hideIds.includes(e.data.target)),
+            allNodes: nodes, allEdges: edges, virtualRootId
+        };
+    }
+
+    function buildTreePositions(nodes, edges) {
+        const VGAP = 160, HGAP = 120;
+        const children = {}, inDeg = {};
+        nodes.forEach(n => { children[n.data.id] = []; inDeg[n.data.id] = 0; });
+        edges.filter(e => (e.data.relationship || 'child') === 'child').forEach(e => { const s = e.data.source, t = e.data.target; if (children[s] && !children[s].includes(t)) children[s].push(t); if (t in inDeg) inDeg[t] = (inDeg[t] || 0) + 1; });
+        const roots = nodes.filter(n => inDeg[n.data.id] === 0);
+        if (!roots.length) return {};
+        const subtreeLeaves = (id, seen = new Set()) => { if (seen.has(id)) return 1; seen.add(id); const ch = children[id] || []; return ch.length ? ch.reduce((s, c) => s + subtreeLeaves(c, seen), 0) : 1; };
+        const pos = {};
+        const placed = new Set();
+        const place = (id, cx, depth, seen = new Set()) => {
+            if (seen.has(id) || placed.has(id)) return; seen.add(id); placed.add(id);
+            pos[id] = { x: cx, y: depth * VGAP + 80 };
+            const ch = (children[id] || []).filter(c => !seen.has(c) && !placed.has(c));
+            if (!ch.length) return;
+            const total = ch.reduce((s, c) => s + subtreeLeaves(c), 0);
+            let ox = cx - ((total - 1) / 2) * HGAP;
+            ch.forEach(c => { const lv = subtreeLeaves(c); place(c, ox + ((lv - 1) / 2) * HGAP, depth + 1, seen); ox += lv * HGAP; });
+        };
+        let offset = 0;
+        roots.forEach(root => { place(root.data.id, offset + (subtreeLeaves(root.data.id) * HGAP) / 2, 0); offset = Math.max(...Object.values(pos).map(p => p.x)) + HGAP * 3; });
+        nodes.forEach(n => { if (!placed.has(n.data.id)) { pos[n.data.id] = { x: offset, y: 80 }; offset += HGAP; placed.add(n.data.id); } });
+        return pos;
+    }
+
+    /* ── Map building — O(1) lookups, built once per graph load ── */
+    function buildHierarchyMaps() {
+        childrenMap.clear();
+        parentMap.clear();
+        cy.nodes().forEach(n => {
+            childrenMap.set(n.id(), new Set());
+            parentMap.set(n.id(), new Set());
+        });
+        cy.edges().filter(e => (e.data('relationship') || 'child') === 'child').forEach(e => {
+            const src = e.data('source'), tgt = e.data('target');
+            if (childrenMap.has(src)) childrenMap.get(src).add(tgt);
+            if (parentMap.has(tgt)) parentMap.get(tgt).add(src);
+        });
+    }
+
+    /* ── Topology status — derived from children, bottom-up ── */
+    function calculateTopologyStatus() {
+        const visited = new Set();
+        function calc(nodeId) {
+            if (visited.has(nodeId)) {
+                const n = cy.getElementById(nodeId);
+                return n.length ? n.data('status') : 'GREEN';
+            }
+            visited.add(nodeId);
+            const children = [...directChildIds(nodeId)];
+            if (!children.length) {
+                const n = cy.getElementById(nodeId);
+                return n.length ? n.data('status') : 'GREEN';
+            }
+            let green = 0, red = 0;
+            children.forEach(cid => { const s = calc(cid); if (s === 'GREEN') green++; else red++; });
+            let status = green === children.length ? 'GREEN' : red === children.length ? 'RED' : 'YELLOW';
+            const node = cy.getElementById(nodeId);
+            if (node.length) { node.data('status', status); node.data('upChildren', green); node.data('downChildren', red); }
+            return status;
+        }
+        cy.nodes().forEach(n => calc(n.id()));
+    }
+
+    function updateParentStatus(nodeId) {
+        const ancestors = new Set();
+        function walkUp(nid) { ancestors.add(nid); for (const pid of getParentIds(nid)) { if (!ancestors.has(pid)) walkUp(pid); } }
+        walkUp(nodeId);
+        const visited = new Set();
+        function calc(nid) {
+            if (visited.has(nid)) { const n = cy.getElementById(nid); return n.length ? n.data('status') : 'GREEN'; }
+            visited.add(nid);
+            const children = [...directChildIds(nid)];
+            if (!children.length) { const n = cy.getElementById(nid); return n.length ? n.data('status') : 'GREEN'; }
+            let green = 0, red = 0;
+            children.forEach(cid => { const s = calc(cid); if (s === 'GREEN') green++; else red++; });
+            let status = green === children.length ? 'GREEN' : red === children.length ? 'RED' : 'YELLOW';
+            const node = cy.getElementById(nid);
+            if (node.length) { node.data('status', status); node.data('upChildren', green); node.data('downChildren', red); }
+            return status;
+        }
+        ancestors.forEach(nid => calc(nid));
+    }
+
+    function animateRecovery(node) {
+        node.animate({ style: { 'width': '52px', 'height': '52px' } }, { duration: 300 });
+        setTimeout(() => { node.animate({ style: { 'width': '42px', 'height': '42px' } }, { duration: 300 }); }, 300);
+    }
+    function animateFailure(node) {
+        const pos = node.position();
+        node.animate({ position: { x: pos.x + 8, y: pos.y } }, { duration: 80 });
+        setTimeout(() => { node.animate({ position: pos }, { duration: 80 }); }, 80);
+    }
+
+    /* ── Tree helpers — O(1) map lookups, no edge scanning ── */
+    function directChildren(nodeId) {
+        const ids = childrenMap.get(nodeId);
+        if (!ids || ids.size === 0) return [];
+        return Array.from(ids).map(id => cy.nodes(`[id="${id}"]`)).filter(n => n.length > 0);
+    }
+    function directChildIds(nodeId) { return childrenMap.get(nodeId) || new Set(); }
+    function getParents(nodeId) {
+        const ids = parentMap.get(nodeId);
+        if (!ids || ids.size === 0) return [];
+        return Array.from(ids).map(id => cy.nodes(`[id="${id}"]`)).filter(n => n.length > 0);
+    }
+    function getParentIds(nodeId) { return parentMap.get(nodeId) || new Set(); }
+
+    function hasVisibleParent(childId, collapsingParent) {
+        for (const pid of getParentIds(childId)) {
+            if (pid !== collapsingParent && !collapsedNodes.has(pid)) {
+                const pNode = cy.nodes(`[id="${pid}"]`);
+                if (pNode.length && !pNode.hasClass('hidden-child')) return true;
+            }
+        }
+        return false;
+    }
+
+    function shouldHide(nodeId, collapsingRoot) {
+        const parents = getParentIds(nodeId);
+        if (parents.size === 0) return false;
+        for (const pid of parents) {
+            if (pid !== collapsingRoot && !collapsedNodes.has(pid)) {
+                const pNode = cy.nodes(`[id="${pid}"]`);
+                if (pNode.length && !pNode.hasClass('hidden-child')) return false;
+            }
+        }
+        return true;
+    }
+
+    function getVisibleDescendants(nodeId) {
+        const result = [];
+        const visited = new Set();
+        const queue = [nodeId];
+        visited.add(nodeId);
+        while (queue.length > 0) {
+            const currentId = queue.shift();
+            for (const cid of directChildIds(currentId)) {
+                if (visited.has(cid)) continue;
+                visited.add(cid);
+                if (shouldHide(cid, nodeId)) {
+                    result.push(cid);
+                    queue.push(cid);
+                }
+            }
+        }
+        return result;
+    }
+
+    function hideDescendants(nodeId) {
+        const descendants = getVisibleDescendants(nodeId);
+        descendants.forEach(cid => {
+            const child = cy.nodes(`[id="${cid}"]`);
+            if (!child.length) return;
+            if (collapsedNodes.has(cid) || child.hasClass('hidden-child')) {
+                cy.edges(`[source="${nodeId}"][target="${cid}"]`).addClass('hidden-edge');
+                cy.edges(`[source="${cid}"][target="${nodeId}"]`).addClass('hidden-edge');
+                return;
+            }
+            child.addClass('hidden-child');
+            cy.connectedEdges(`[source="${cid}"],[target="${cid}"]`).forEach(e => e.addClass('hidden-edge'));
+        });
+    }
+
+    function showDirectChildren(nodeId, visited) {
+        if (!visited) visited = new Set();
+        for (const cid of directChildIds(nodeId)) {
+            if (visited.has(cid)) continue;
+            visited.add(cid);
+            const child = cy.nodes(`[id="${cid}"]`);
+            if (!child.length) continue;
+            child.removeClass('hidden-child collapsed-child');
+            cy.edges(`[source="${nodeId}"][target="${cid}"]`).removeClass('hidden-edge');
+            cy.edges(`[source="${cid}"][target="${nodeId}"]`).removeClass('hidden-edge');
+            cy.connectedEdges(`[source="${cid}"],[target="${cid}"]`).forEach(e => {
+                const otherId = e.data('source') === cid ? e.data('target') : e.data('source');
+                const other = cy.nodes(`[id="${otherId}"]`);
+                if (other.length && !other.hasClass('hidden-child')) e.removeClass('hidden-edge');
+            });
+            if (collapsedNodes.has(cid)) child.addClass('collapsed');
+            else showDirectChildren(cid, visited);
+        }
+    }
+
+    function collapseNode(nodeId) {
+        const node = cy.nodes(`[id="${nodeId}"]`);
+        if (!node.length) return;
+        const hiddenCount = getVisibleDescendants(nodeId).length;
+        collapsedNodes.add(nodeId);
+        node.data('hiddenCount', hiddenCount);
+        node.addClass('collapsed');
+        hideDescendants(nodeId);
+    }
+
+    function collapseNodeOnly(nodeId) {
+        const node = cy.nodes(`[id="${nodeId}"]`);
+        if (!node.length) return;
+        const childIds = directChildIds(nodeId);
+        collapsedNodes.add(nodeId);
+        node.data('hiddenCount', childIds.size);
+        node.addClass('collapsed');
+        for (const cid of childIds) {
+            const child = cy.nodes(`[id="${cid}"]`);
+            if (!child.length) continue;
+            if (shouldHide(cid, nodeId)) child.addClass('hidden-child');
+            else child.addClass('collapsed-child');
+            cy.edges(`[source="${nodeId}"][target="${cid}"]`).addClass('hidden-edge');
+            cy.edges(`[source="${cid}"][target="${nodeId}"]`).addClass('hidden-edge');
+        }
+    }
+
+    function expandNode(nodeId) {
+        const node = cy.nodes(`[id="${nodeId}"]`);
+        if (!node.length) return;
+        collapsedNodes.delete(nodeId);
+        node.data('hiddenCount', 0);
+        node.removeClass('collapsed');
+        showDirectChildren(nodeId);
+    }
+
+    function collapseAll() {
+        cy.nodes().forEach(n => { if (n.data('hasChildren')) collapseNode(n.id()); });
+        cy.animate({ fit: { eles: cy.elements(':visible'), padding: 40 } }, { duration: 350 });
+        scheduleSave();
+    }
+
+    function expandAll() {
+        cy.nodes().forEach(n => {
+            collapsedNodes.delete(n.id());
+            n.removeClass('collapsed hidden-child collapsed-child');
+            n.data('hiddenCount', 0);
+        });
+        cy.edges().forEach(e => e.removeClass('hidden-edge'));
+        cy.animate({ fit: { eles: cy.elements(':visible'), padding: 40 } }, { duration: 350 });
+        scheduleSave();
+    }
+
+    function computeDepthMap() {
+        depthMap = {};
+        const roots = [];
+        parentMap.forEach((parents, nid) => { if (parents.size === 0) roots.push(nid); });
+        const queue = [];
+        const visited = new Set();
+        roots.forEach(r => { depthMap[r] = 0; queue.push(r); visited.add(r); });
+        while (queue.length > 0) {
+            const cid = queue.shift();
+            const d = depthMap[cid];
+            for (const childId of directChildIds(cid)) {
+                if (!visited.has(childId)) {
+                    visited.add(childId);
+                    depthMap[childId] = d + 1;
+                    queue.push(childId);
+                }
+            }
+        }
+        cy.nodes().forEach(n => { if (!(n.id() in depthMap)) depthMap[n.id()] = 0; });
+    }
+
+    function getNodeDepth(nodeId) {
+        if (!depthMap) computeDepthMap();
+        return depthMap[nodeId] || 0;
+    }
+
+    function computeChildCountMap() {
+        childCountMap = {};
+        childrenMap.forEach((ids, nid) => { childCountMap[nid] = ids.size; });
+    }
+
+    function tagParentNodes() {
+        computeChildCountMap();
+        cy.nodes().forEach(node => {
+            const count = childCountMap[node.id()] || 0;
+            const pCount = parentMap.has(node.id()) ? parentMap.get(node.id()).size : 0;
+            node.data('hasChildren', count > 0);
+            node.data('childCount', count);
+            node.data('parentCount', pCount);
+        });
+    }
+
+    /* ── Info bar ── */
+    function updateInfo() {
+        const total = cy.nodes().length;
+        const up = cy.nodes('[status="GREEN"]').length;
+        const down = cy.nodes('[status="RED"]').length + cy.nodes('[status="YELLOW"]').length;
+        document.getElementById('kpiTotal').textContent = total;
+        document.getElementById('kpiUp').textContent = up;
+        document.getElementById('kpiDown').textContent = down;
+    }
+
+    /* ── Persist state ── */
+    async function loadDashboardState() {
+        try { const r = await fetch('/api/dashboard-state'); if (!r.ok) return null; return await r.json(); } catch { return null; }
+    }
+    function scheduleSave() { if (suppressSave) return; clearTimeout(saveTimer); saveTimer = setTimeout(persistState, 1200); }
+    async function persistState() {
+        if (!cy) return;
+        const pan = cy.pan();
+        const positions = {};
+        cy.nodes().forEach(n => { const p = n.position(); positions[n.id()] = { x: p.x, y: p.y }; });
+        try {
+            await fetch('/api/dashboard-state', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+                body: JSON.stringify({ zoom: cy.zoom(), pan_x: pan.x, pan_y: pan.y, collapsed: Array.from(collapsedNodes), node_positions: positions, layout_locked: layoutLocked })
+            });
+            flashSyncBadge();
+        } catch {}
+    }
+    function flashSyncBadge() { const b = document.getElementById('syncBadge'); b.classList.add('show'); setTimeout(() => b.classList.remove('show'), 2200); }
+
+    /* ── Lock layout ── */
+    function applyLockState() {
+        const btn = document.getElementById('lockLayoutBtn');
+        if (layoutLocked) {
+            cy.nodes().ungrabify();
+            btn.innerHTML = '<i class="fas fa-lock"></i> Locked';
+            btn.classList.add('active-lock');
+        } else {
+            cy.nodes().grabify();
+            btn.innerHTML = '<i class="fas fa-lock-open"></i> Unlocked';
+            btn.classList.remove('active-lock');
+        }
+    }
+
+    /* ── Ping flash ── */
+    function showPingFlash(msg) {
+        const el = document.getElementById('pingFlash');
+        el.innerHTML = msg; el.style.display = 'block';
+        setTimeout(() => { el.style.display = 'none'; }, 6000);
+    }
+
+    /* ── Init graph ── */
+    async function initGraph(rawData, savedState) {
+        const cyEl = document.getElementById('cy');
+        const loadEl = document.getElementById('loading');
+        loadEl.style.display = 'none';
+        cyEl.style.display = 'block';
+        if (cy) { cy.destroy(); cy = null; }
+
+        /* Invalidate caches */
+        depthMap = null;
+        childCountMap = null;
+
+        const prep = prepareElements(rawData);
+        const treePos = buildTreePositions(prep.allNodes, prep.allEdges);
+
+        cy = cytoscape({
+            container: cyEl,
+            style: CY_STYLE,
+            minZoom: 0.1, maxZoom: 5,
+            boxSelectionEnabled: false,
+            layout: { name: 'preset' },
+            elements: {
+                nodes: prep.nodes.map(n => ({ data: n.data, position: treePos[n.data.id] || { x: 400, y: 300 } })),
+                edges: prep.edges.map(e => ({ data: { ...e.data, status: String(e.data.status), relationship: e.data.relationship || 'child' } }))
+            }
+        });
+
+        tagParentNodes();
+        buildHierarchyMaps();
+        calculateTopologyStatus();
+        computeDepthMap();
+
+        const savedPos = savedState && savedState.node_positions;
+        const hasSavedPos = savedPos && Object.keys(savedPos).length;
+
+        /* Only restore saved positions when layout is explicitly locked */
+        if (savedState && savedState.layout_locked && hasSavedPos) {
+            cy.nodes().forEach(n => { if (savedPos[n.id()]) n.position(savedPos[n.id()]); });
+        }
+
+        if (savedState && savedState.collapsed && savedState.collapsed.length) {
+            savedState.collapsed.forEach(nid => collapseNode(nid));
+        }
+
+        if (savedState && savedState.layout_locked) {
+            layoutLocked = true;
+            applyLockState();
+        }
+
+        /* Restore viewport only when layout is locked */
+        if (savedState && savedState.layout_locked && typeof savedState.zoom === 'number' && savedState.zoom > 0) {
+            cy.zoom(savedState.zoom);
+            cy.pan({ x: savedState.pan_x || 0, y: savedState.pan_y || 0 });
+        } else {
+            /* Use breadthfirst tree layout instead of Dagre */
+            let usedLayout = false;
+            try {
+                const layoutDone = new Promise((resolve, reject) => {
+                    cy.one('layoutstop', () => resolve());
+                    cy.one('layouterror', (e) => reject(e));
+                    cy.layout({
+                        name: 'breadthfirst',
+                        directed: true,
+                        circle: false,
+                        spacingFactor: 2,
+                        avoidOverlap: true,
+                        nodeSep: 100,
+                        animate: false,
+                        fit: true,
+                        padding: 50
+                    }).run();
+                });
+                await layoutDone;
+                usedLayout = true;
+            } catch (err) {
+                console.warn('Breadthfirst layout failed:', err);
+            }
+            if (!usedLayout) { cy.fit(40); cy.center(); }
+            persistState();
+        }
+
+        document.getElementById('legendBox').style.display = 'block';
+        updateInfo();
+        setupCyEvents(cyEl);
+        initMinimap();
+    }
+
+    /* ── Minimap ── */
+    function initMinimap() {
+        if (!cy || navInstance) return;
+        const minimapEl = document.getElementById('cy-minimap');
+        if (minimapEl && typeof cy.navigator === 'function') {
+            navInstance = cy.navigator({
+                container: minimapEl,
+                viewLiveFramerate: 0,
+                thumbnailLiveFramerate: -1,
+                thumbnailPanFadeTime: 0,
+                dblClickDelay: 300,
+                showEdgeLabels: false,
+                style: { colors: { bg: '#1e293b', node: '#3b82f6', nodeOutline: '#2563eb', parent: 'rgba(59,130,246,.12)', parentOutline: '#2563eb', edge: '#475569', edgeOutline: '#334155', overlay: 'rgba(59,130,246,.08)', overlayOutline: 'rgba(59,130,246,.25)' }, size: [180, 120] }
+            });
+            minimapEl.style.display = 'block';
+        }
+    }
+
+    /* ── Cytoscape events ── */
+    function setupCyEvents(cyEl) {
+        cy.on('mouseover', 'node', function (evt) {
+            evt.target.addClass('hovered');
+            renderTooltip(evt.target);
+            positionTooltip(evt);
+        });
+        cy.on('mouseout', 'node', function (evt) {
+            evt.target.removeClass('hovered');
+            document.getElementById('nodeTooltip').style.display = 'none';
+        });
+        cy.on('mousemove', 'node', positionTooltip);
+
+        cy.on('tap', 'node', function (evt) { updateSiteInfoPanel(evt.target.data()); });
+        cy.on('tap', 'edge', function (evt) { openEdgeModal(evt.target.data()); });
+
+        cyEl.addEventListener('dblclick', function (e) {
+            const point = cy.renderer().projectIntoViewport(e.clientX, e.clientY);
+            const hit = cy.nodes().filter(n => {
+                const bb = n.boundingBox();
+                return point[0] >= bb.x1 && point[0] <= bb.x2 && point[1] >= bb.y1 && point[1] <= bb.y2;
+            });
+            const node = hit[0];
+            if (!node || !node.data('hasChildren')) return;
+            const nid = node.id();
+            if (collapsedNodes.has(nid)) { expandNode(nid); } else { collapseNode(nid); }
+            cy.animate({ fit: { eles: cy.elements(':visible'), padding: 40 } }, { duration: 380 });
+            scheduleSave();
+        });
+
+        cyEl.addEventListener('contextmenu', function (e) {
+            e.preventDefault();
+            const point = cy.renderer().projectIntoViewport(e.clientX, e.clientY);
+            const hit = cy.nodes().filter(n => {
+                const bb = n.boundingBox();
+                return point[0] >= bb.x1 && point[0] <= bb.x2 && point[1] >= bb.y1 && point[1] <= bb.y2;
+            });
+            const node = hit[0];
+            if (!node) return;
+            ctxNode = node;
+            openCtxMenu(e.clientX, e.clientY);
+        });
+
+        cy.on('dragfree', 'node', function () { scheduleSave(); });
+        cy.on('viewport', function () { document.getElementById('nodeTooltip').style.display = 'none'; scheduleSave(); });
+        cy.on('layoutstop', function () { scheduleSave(); });
+    }
+
+    /* ── Tooltip ── */
+    function renderTooltip(node) {
+        const d = node.data();
+        const isUp = d.status === 'GREEN', isY = d.status === 'YELLOW';
+        const col = isUp ? '#4ade80' : (isY ? '#fcd34d' : '#f87171');
+        const ico = isUp ? 'fa-circle-check' : (isY ? 'fa-circle-exclamation' : 'fa-circle-xmark');
+        const stat = isUp ? 'ONLINE' : (isY ? 'PARTIAL' : 'OFFLINE');
+        const childRow = d.hasChildren
+            ? `<div class="tt-children"><i class="fas fa-sitemap"></i>${d.childCount} child${d.childCount>1?'ren':''} · dbl-click to ${collapsedNodes.has(d.id)?'expand':'collapse'}</div>`
+            : '';
+        document.getElementById('nodeTooltip').innerHTML =
+            `<div class="tt-title"><i class="fas fa-server" style="color:#93c5fd;font-size:13px;"></i>${d.hostname||d.device_name||d.id}</div>` +
+            `<div class="tt-divider"></div>` +
+            `<div class="tt-row"><span class="tt-label">IP Address</span><span class="tt-value">${d.id}</span></div>` +
+            (d.device_name&&d.hostname&&d.device_name!==d.hostname?`<div class="tt-row"><span class="tt-label">Device name</span><span class="tt-value">${d.device_name}</span></div>`:'') +
+            `<div class="tt-row"><span class="tt-label">Location</span><span class="tt-value">${d.location||'—'}</span></div>` +
+            `<div class="tt-row"><span class="tt-label">Category</span><span class="tt-value">${d.category||'—'}</span></div>` +
+            `<div class="tt-row"><span class="tt-label">Model</span><span class="tt-value">${d.model||'—'}</span></div>` +
+            `<div class="tt-row"><span class="tt-label">Status</span><span class="tt-status" style="color:${col}"><i class="fas ${ico}"></i>${stat}</span></div>` +
+            childRow +
+            `<div class="tt-hint"><i class="fas fa-mouse me-1"></i>Dbl-click expand · Right-click options</div>`;
+        document.getElementById('nodeTooltip').style.display = 'block';
+    }
+
+    function positionTooltip(evt) {
+        const tt = document.getElementById('nodeTooltip');
+        const rect = cy.container().getBoundingClientRect();
+        const r = evt.target.renderedPosition();
+        let left = rect.left + r.x + 24, top = rect.top + r.y - 18;
+        if (left + 295 > window.innerWidth) left = rect.left + r.x - 305;
+        if (top + 220 > window.innerHeight) top = window.innerHeight - 230;
+        if (top < 6) top = 6;
+        tt.style.left = left + 'px'; tt.style.top = top + 'px';
+    }
+
+    /* ── Site info panel ── */
+    function updateSiteInfoPanel(d) {
+        const isUp = d.status==='GREEN', isY = d.status==='YELLOW';
+        const bc = isUp ? '#22c55e' : (isY ? '#f59e0b' : '#ef4444');
+        const lb = isUp ? 'ONLINE' : (isY ? 'PARTIAL' : 'OFFLINE');
+        document.getElementById('alertPanel').classList.add('show');
+        document.getElementById('alertPanel').innerHTML =
+            `<div class="alert-head"><span><i class="fas fa-server me-1"></i>${d.hostname||d.device_name||d.id}</span><span style="color:${bc};">${lb}</span></div>` +
+            `<div style="font-size:11px;color:#94a3b8;"><i class="fas fa-map-marker-alt me-1"></i>${d.location||'Unknown'} <i class="fas fa-tag ms-2 me-1"></i>${d.category||'device'}</div>` +
+            (d.hasChildren?`<div style="font-size:11px;color:#3b82f6;margin-top:4px;"><i class="fas fa-sitemap me-1"></i>${d.childCount} children (${collapsedNodes.has(d.id)?'collapsed':'expanded'})</div>`:'');
+        setTimeout(() => { document.getElementById('alertPanel').classList.remove('show'); }, 5000);
+    }
+
+    /* ── Edge modal ── */
+    function openEdgeModal(d) {
+        document.getElementById('linkModalTitle').innerHTML = `<i class="fas fa-exchange-alt me-2" style="color:#3b82f6;"></i>${d.source} ↔ ${d.target}`;
+        const up = d.status===true||d.status==='true';
+        document.getElementById('linkModalBody').innerHTML =
+            `<div style="background:${up?'rgba(34,197,94,.15)':'rgba(239,68,68,.15)'};color:${up?'#4ade80':'#f87171'};text-align:center;padding:10px;border-radius:10px;font-weight:700;margin-bottom:14px;font-size:14px;">` +
+                `<i class="fas ${up?'fa-circle-check':'fa-circle-xmark'} me-2"></i>${up?'LINK IS UP':'LINK IS DOWN'}` +
+            `</div>` +
+            `<table style="width:100%;font-size:13px;border-collapse:collapse;">` +
+                `<tr><th style="width:35%;color:#94a3b8;text-align:left;padding:4px 0;">Source</th><td style="color:#e2e8f0;"><strong>${d.source}</strong> <span style="color:#64748b;">${d.source_location||''}</span></td></tr>` +
+                `<tr><th style="color:#94a3b8;text-align:left;padding:4px 0;">Target</th><td style="color:#e2e8f0;"><strong>${d.target}</strong> <span style="color:#64748b;">${d.destination_location||''}</span></td></tr>` +
+                `<tr><th style="color:#94a3b8;text-align:left;padding:4px 0;">Remark</th><td style="color:#e2e8f0;">${d.label||'—'}</td></tr>` +
+                `<tr><th style="color:#94a3b8;text-align:left;padding:4px 0;">Latency</th><td style="color:#e2e8f0;">${d.latency_ms!=null?d.latency_ms+' ms':'—'}</td></tr>` +
+                `<tr><th style="color:#94a3b8;text-align:left;padding:4px 0;">Last Check</th><td style="color:#e2e8f0;">${d.last_checked||'—'}</td></tr>` +
+            `</table>`;
+        showModal();
+    }
+
+    /* ── Context menu ── */
+    function openCtxMenu(clientX, clientY) {
+        const menu = document.getElementById('ctxMenu');
+        const nid = ctxNode.id(), d = ctxNode.data();
+        const isCollapsed = collapsedNodes.has(nid);
+        const hasChildren = d.hasChildren;
+        const isRoot = (d.parentCount || 0) === 0 && !d.location;
+
+        const upCh = d.upChildren || 0;
+        const downCh = d.downChildren || 0;
+        let statusLine = '';
+        if (upCh + downCh > 0) {
+            const statusColor = d.status === 'GREEN' ? '#22c55e' : d.status === 'RED' ? '#ef4444' : '#f59e0b';
+            statusLine = '<br><span style="font-size:11px;color:' + statusColor + ';">' +
+                (upCh > 0 ? upCh + ' up' : '') +
+                (upCh > 0 && downCh > 0 ? ' · ' : '') +
+                (downCh > 0 ? downCh + ' down' : '') +
+                '</span>';
+        }
+        document.getElementById('ctxIpHeader').innerHTML =
+            '<strong>' + (d.hostname||d.device_name||nid) + '</strong>' +
+            (d.tooltip && d.tooltip !== nid ? '<br><span style="font-size:11px;color:#94a3b8;">' + d.tooltip + '</span>' : '') +
+            statusLine +
+            (d.hiddenCount > 0 ? '<br><span style="font-size:11px;color:#f59e0b;">' + d.hiddenCount + ' devices hidden</span>' : '');
+
+        /* Dynamic menu visibility */
+        document.getElementById('ctxExpand').style.display         = isCollapsed ? 'flex' : 'none';
+        document.getElementById('ctxCollapseNode').style.display   = (!isCollapsed && hasChildren) ? 'flex' : 'none';
+        document.getElementById('ctxCollapseBranch').style.display = (!isCollapsed && hasChildren && d.childCount > 1) ? 'flex' : 'none';
+        document.getElementById('ctxHideNode').style.display       = isRoot ? 'none' : 'flex';
+
+        menu.style.display = 'block';
+        const mw = menu.offsetWidth||205, mh = menu.offsetHeight||240;
+        menu.style.left = (clientX+mw>window.innerWidth?clientX-mw:clientX) + 'px';
+        menu.style.top = (clientY+mh>window.innerHeight?clientY-mh:clientY) + 'px';
+    }
+    function closeCtxMenu() { document.getElementById('ctxMenu').style.display='none'; }
+    document.addEventListener('click', () => closeCtxMenu());
+    document.addEventListener('contextmenu', e => { if(!e.target.closest('#cy')) closeCtxMenu(); });
+
+    document.getElementById('ctxOpenHTTP').addEventListener('click',  () => { if(!ctxNode)return; closeCtxMenu(); window.open('http://'+ctxNode.id(),'_blank'); });
+    document.getElementById('ctxOpenHTTPS').addEventListener('click', () => { if(!ctxNode)return; closeCtxMenu(); window.open('https://'+ctxNode.id(),'_blank'); });
+    document.getElementById('ctxPing').addEventListener('click', () => {
+        if(!ctxNode)return; const ip=ctxNode.id(); closeCtxMenu();
+        fetch('/api/ping/'+ip).catch(()=>{});
+        showPingFlash('<i class="fas fa-satellite-dish"></i> Pinging '+ip+'…');
+    });
+    document.getElementById('ctxExpand').addEventListener('click', () => {
+        if(!ctxNode)return; expandNode(ctxNode.id()); closeCtxMenu();
+        cy.animate({fit:{eles:cy.elements(':visible'),padding:40}},{duration:380});
+        scheduleSave();
+    });
+    document.getElementById('ctxCollapseNode').addEventListener('click', () => {
+        if(!ctxNode)return; collapseNodeOnly(ctxNode.id()); closeCtxMenu();
+        cy.animate({fit:{eles:cy.elements(':visible'),padding:40}},{duration:380});
+        scheduleSave();
+    });
+    document.getElementById('ctxCollapseBranch').addEventListener('click', () => {
+        if(!ctxNode)return; collapseNode(ctxNode.id()); closeCtxMenu();
+        cy.animate({fit:{eles:cy.elements(':visible'),padding:40}},{duration:380});
+        scheduleSave();
+    });
+    document.getElementById('ctxHideNode').addEventListener('click', () => {
+        if(!ctxNode) return;
+        ctxNode.addClass('hidden-child');
+        ctxNode.connectedEdges().addClass('hidden-edge');
+        closeCtxMenu();
+        scheduleSave();
+    });
+    document.getElementById('ctxFocusNode').addEventListener('click', () => {
+        if(!ctxNode) return; closeCtxMenu();
+        cy.animate({ center: { eles: ctxNode }, zoom: 1.4 }, { duration: 400, easing: 'ease-out' });
+    });
+    document.getElementById('ctxDetails').addEventListener('click', () => {
+        if(!ctxNode)return; closeCtxMenu();
+        const d=ctxNode.data();
+        document.getElementById('linkModalTitle').innerHTML=`<i class="fas fa-server me-2" style="color:#3b82f6;"></i>${d.hostname||d.device_name||d.id}`;
+        document.getElementById('linkModalBody').innerHTML=
+            `<table style="width:100%;font-size:13px;border-collapse:collapse;">`+
+            Object.entries(d).filter(([,v])=>v!==undefined&&v!==null&&v!=='')
+            .map(([k,v])=>`<tr><th style="width:35%;color:#94a3b8;font-weight:600;text-align:left;padding:4px 0;">${k}</th><td style="color:#e2e8f0;">${v}</td></tr>`).join('')+
+            `</table>`;
+        showModal();
+    });
+    document.getElementById('ctxDevicePage').addEventListener('click', () => {
+        if(!ctxNode)return; closeCtxMenu();
+        window.open('/device/' + ctxNode.id(), '_blank');
+    });
+
+    /* ── Modal ── */
+    function showModal() { document.getElementById('linkModalOverlay').classList.add('show'); }
+    function hideModal() { document.getElementById('linkModalOverlay').classList.remove('show'); }
+    document.getElementById('modalCloseBtn').addEventListener('click', hideModal);
+    document.getElementById('linkModalOverlay').addEventListener('click', function(e){ if(e.target===this)hideModal(); });
+
+    /* ── Legend toggle ── */
+    document.getElementById('legendToggle').addEventListener('click', () => {
+        document.getElementById('legendBox').classList.toggle('collapsed');
+        document.getElementById('legendIcon').className = document.getElementById('legendBox').classList.contains('collapsed')
+            ? 'fas fa-chevron-right ms-auto' : 'fas fa-chevron-down ms-auto';
+    });
+
+    /* ── Toolbar buttons ── */
+    document.getElementById('searchInput').addEventListener('keyup', e => {
+        if(e.key!=='Enter'||!cy) return;
+        const term=e.target.value.toLowerCase().trim();
+        if(!term) return;
+        const found=cy.nodes().filter(n=>{
+            const d=n.data();
+            return [d.label,d.id,d.device_name,d.hostname,d.location].some(v=>v&&String(v).toLowerCase().includes(term));
+        });
+        if(found.length){
+            if(found[0].hasClass('hidden-child')){
+                let cur=found[0]; const toExp=[];
+                for(let i=0;i<25;i++){
+                    const pe=cy.edges(`[target="${cur.id()}"]`);
+                    if(!pe.length) break;
+                    const pid=pe[0].data('source');
+                    if(collapsedNodes.has(pid)) toExp.push(pid);
+                    cur=cy.nodes(`[id="${pid}"]`);
+                }
+                toExp.reverse().forEach(pid=>expandNode(pid));
+            }
+            cy.animate({center:{eles:found[0]},zoom:2.4},{duration:500});
+            found[0].addClass('hovered');
+            setTimeout(()=>found[0].removeClass('hovered'),2200);
+        }
+    });
+
+    document.getElementById('fitBtn').addEventListener('click', () => { cy?.fit(40); scheduleSave(); });
+    document.getElementById('expandAllBtn').addEventListener('click', expandAll);
+    document.getElementById('collapseAllBtn').addEventListener('click', collapseAll);
+    document.getElementById('resetLayoutBtn').addEventListener('click', async () => {
+        if(!cy) return;
+        suppressSave = true;
+
+        /* Clear saved positions on server */
+        try {
+            await fetch('/api/dashboard-state', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+                body: JSON.stringify({
+                    zoom: 1, pan_x: 0, pan_y: 0,
+                    collapsed: [],
+                    node_positions: {},
+                    layout_locked: false
+                })
+            });
+        } catch(ex) { /* ignore */ }
+
+        /* Force Dagre layout on current graph */
+        cy.nodes().forEach(n => { n.removeData('position'); });
+        try {
+            await new Promise((resolve, reject) => {
+                cy.one('layoutstop', () => resolve());
+                cy.one('layouterror', (e) => reject(e));
+                cy.layout({
+                    name: 'dagre',
+                    rankDir: 'TB',
+                    rankSep: 180,
+                    nodeSep: 150,
+                    edgeSep: 60,
+                    animate: true,
+                    fit: true,
+                    padding: 40
+                }).run();
+            });
+        } catch(err) {
+            console.warn('Dagre failed, using tree positions:', err);
+            const treePos = buildTreePositions(
+                cy.nodes().map(n => ({ data: { id: n.id() } })),
+                cy.edges().map(e => ({ data: { source: e.data('source'), target: e.data('target'), relationship: e.data('relationship') } }))
+            );
+            cy.nodes().forEach(n => { if (treePos[n.id()]) n.position(treePos[n.id()]); });
+            cy.fit(40);
+        }
+
+        setTimeout(() => {
+            suppressSave = false;
+            persistState();
+        }, 500);
+    });
+    document.getElementById('lockLayoutBtn').addEventListener('click', () => {
+        if (!cy) return;
+        layoutLocked = !layoutLocked;
+        applyLockState();
+        persistState();
+    });
+    document.getElementById('pingBtn').addEventListener('click', async function(){
+        const btn=this; btn.disabled=true;
+        btn.innerHTML='<span class="spinner" style="width:12px;height:12px;border-width:2px;"></span> Pinging…';
+        try{
+            await fetch('/api/ping/now');
+            const poll=setInterval(async()=>{
+                try{
+                    const r=await fetch('/api/ping/status'); const s=await r.json();
+                    if(!s.running){
+                        clearInterval(poll);
+                        const res = s.last_result || {};
+                        showPingFlash(
+                            `<i class="fas fa-check-circle"></i> Ping completed — Total: ${res.total||0} | Up: ${res.up||0} | Down: ${res.down||0} | ${res.duration||0}s`
+                        );
+                        btn.innerHTML='<i class="fas fa-check"></i> Done';
+                        setTimeout(()=>{ btn.innerHTML='<i class="fas fa-network-wired"></i> Ping All'; btn.disabled=false; },3000);
+                        reloadTopology();
+                    }
+                }catch(ex){}
+            },2000);
+        }catch(ex){
+            btn.innerHTML='<i class="fas fa-exclamation-triangle"></i> Error'; btn.disabled=false;
+            setTimeout(()=>{ btn.innerHTML='<i class="fas fa-network-wired"></i> Ping All'; },2200);
+        }
+    });
+    document.getElementById('refreshBtn').addEventListener('click', reloadTopology);
+    document.getElementById('exitBtn').addEventListener('click', () => { window.close(); if (window.opener) window.close(); else window.location.href = '/dashboard'; });
+
+    function reloadTopology(){
+        if(cy){ cy.destroy(); cy=null; }
+        document.getElementById('cy').style.display='none';
+        document.getElementById('loading').style.display='flex';
+        loadGraph(); loadAlerts(); loadDevices();
+    }
+
+    /* ── Data loaders ── */
+    async function loadGraph(){
+        try{
+            const [topo, state] = await Promise.all([
+                fetch('/api/topology').then(r=>r.json()),
+                loadDashboardState()
+            ]);
+            await initGraph(topo, state);
+        }catch(ex){ console.error('loadGraph:',ex); }
+    }
+
+    async function loadAlerts(){
+        try{
+            const r=await fetch('/api/alerts'); const alerts=await r.json();
+            const count=alerts.length;
+            document.getElementById('alertCount').textContent=count;
+            const list=document.getElementById('alertList');
+            if(count){
+                list.innerHTML=alerts.map(a=>`<div class="alert-item"><i class="fas fa-bell me-1"></i><strong>${a.label}</strong><br><span style="color:#94a3b8;">${a.ip}${a.location?' · '+a.location:''}</span></div>`).join('');
+            } else {
+                list.innerHTML='<div style="color:#64748b;padding:4px;"><i class="fas fa-check-circle" style="color:#22c55e;"></i> No active alerts</div>';
+            }
+        }catch(ex){}
+    }
+
+    async function loadDevices(){
+        try{
+            const r=await fetch('/api/devices-stats'); const data=await r.json();
+            document.getElementById('kpiTotal').textContent=data.total||0;
+            document.getElementById('kpiUp').textContent=data.up||0;
+            document.getElementById('kpiDown').textContent=data.down||0;
+        }catch(ex){}
+    }
+
+    /* ── Boot ── */
+    window.onload = () => {
+        loadAlerts();
+        loadDevices();
+        loadGraph();
+        setInterval(() => { loadAlerts(); loadDevices(); }, 28000);
+    };
+
+    /* ── Socket.IO ── */
+    try {
+        const socket = io();
+        socket.on('device_status_update', data => {
+            if (!cy) return;
+            const changes = data.changes || [];
+            changes.forEach(ch => {
+                const node = cy.nodes(`[id="${ch.id}"]`);
+                if (node.length) {
+                    const oldStatus = node.data('status');
+                    const newStatus = ch.status ? 'GREEN' : 'RED';
+                    if (oldStatus !== newStatus) {
+                        node.data('status', newStatus);
+                        updateParentStatus(ch.id);
+                        if (oldStatus === 'RED' && newStatus === 'GREEN') animateRecovery(node);
+                        else if (oldStatus === 'GREEN' && newStatus === 'RED') animateFailure(node);
+                    }
+                }
+            });
+            loadDevices();
+        });
+        socket.on('dashboard_updated', state => {
+            if (!cy) return;
+            suppressSave = true;
+            const positions = state.node_positions || {};
+            if (Object.keys(positions).length) {
+                cy.nodes().forEach(n => { if(positions[n.id()]) n.position(positions[n.id()]); });
+            }
+            collapsedNodes.clear();
+            (state.collapsed || []).forEach(id => collapsedNodes.add(id));
+            cy.nodes().forEach(n => n.removeClass('collapsed hidden-child collapsed-child'));
+            cy.edges().forEach(e => e.removeClass('hidden-edge'));
+            tagParentNodes();
+            buildHierarchyMaps();
+            calculateTopologyStatus();
+            computeDepthMap();
+            collapsedNodes.forEach(nid => {
+                const node=cy.nodes(`[id="${nid}"]`);
+                if(node.length){ node.addClass('collapsed'); hideDescendants(nid); }
+            });
+            layoutLocked = !!state.layout_locked;
+            applyLockState();
+            suppressSave = false;
+        });
+    } catch(ex) {}
+
+})();
+</script>
+</body>
+</html>

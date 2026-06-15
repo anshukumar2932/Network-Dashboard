@@ -1,21 +1,36 @@
 from sqlalchemy.orm import sessionmaker, selectinload
-from db.models import engine,User,Link,Device,Site,Location,TopologyNode
-from werkzeug.security import generate_password_hash, check_password_hash    
-from sqlalchemy import select,func
-from datetime import timezone
+from sqlalchemy.exc import IntegrityError
+from db.models import engine, User, Device, NetworkLink, PingHistory, TopologyCache, Category, DashboardState
+from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy import select, func, or_
+from datetime import datetime, timezone
 import time as _time
+import json
+import re
 
-SessionLocal = sessionmaker(
-    bind=engine,
-    expire_on_commit=False
+SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+
+IP_RE = re.compile(
+    r'^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$'
 )
 
-def login(username,password):
+
+def _get_or_create_category(session, name):
+    name = name.strip().lower()
+    cat = session.query(Category).filter(Category.name == name).first()
+    if not cat:
+        cat = Category(name=name)
+        session.add(cat)
+        session.flush()
+    return cat
+
+
+def login(username, password):
     print(f"[DB] login(username={username})")
-    session=SessionLocal()
+    session = SessionLocal()
     try:
-        user=session.query(User).filter_by(user=username).first()
-        if user and check_password_hash(user.passwd,password):
+        user = session.query(User).filter_by(user=username).first()
+        if user and check_password_hash(user.passwd, password):
             print(f"[DB] login() -> success for {username}")
             return user
         else:
@@ -26,636 +41,77 @@ def login(username,password):
         return e
     finally:
         session.close()
-        
-#returns list of all device(device name) with their location ,site , status
-def device_status(category):
-    print(f"[DB] device_status(category={category})")
-    session=SessionLocal()
+
+def all_devices_status():
+    session = SessionLocal()
     try:
-        devices=session.query(Device).filter(Device.category==category).options(
-            selectinload(Device.site).selectinload(Site.location)
-        ).all()
-        if not devices:
-            print(f"[DB] device_status({category}) -> None")
-            return None
-        
-        result=[]
+        devices = session.query(Device).all()
+        result = []
         for device in devices:
+            last_seen_str = device.last_seen.strftime("%Y-%m-%d %H:%M:%S") if device.last_seen else None
             result.append({
-                "id":str(device.id),
-                "label": device.hostname,
+                "id": device.ip,
+                "label": device.device_name or device.ip,
                 "ip": device.ip,
                 "status": device.status,
-                "category": device.category,
-                "site": device.site.name,
-                "location": device.site.location.name
+                "category": device.category_obj.name if device.category_obj else "",
+                "location": device.location or "",
+                "device_name": device.device_name or "",
+                "hostname": device.hostname or "",
+                "model": device.model or "",
+                "last_seen": last_seen_str
             })
-        print(f"[DB] device_status({category}) -> {len(result)} devices")
         return result
     finally:
         session.close()
 
-def radio_down():
-    session=SessionLocal()
-    try:
-        device=session.query(Device).filter(Device.status==False,Device.category=="radio").first()
-        return device
-    finally:
-        session.close()
 
-def location_data(id):
-    session=SessionLocal()
-    try:
-        sites=session.query(Site).options(
-            selectinload(Site.location)
-        ).filter(Site.location_id==id).all()
-        return [{"id": s.id, "name": s.name, "location": {"id": s.location.id, "name": s.location.name} if s.location else None} for s in sites]
-    finally:
-        session.close()
-
-def site_data(id):
-    session=SessionLocal()
-    try:
-        sites=session.query(Site).options(
-            selectinload(Site.location)
-        ).filter(Site.id==id).all()
-        return [{"id": s.id, "name": s.name, "location": {"id": s.location.id, "name": s.location.name} if s.location else None} for s in sites]
-    finally:
-        session.close()
-
-def full_topology():
-    t0 = _time.perf_counter()
-    print("[DB] full_topology()")
+def add_device(device_name, ip, model, category, location):
+    print(f"[DB] add_device(device_name={device_name}, ip={ip})")
     session = SessionLocal()
     try:
-        sites = session.query(Site).options(
-            selectinload(Site.location),
-            selectinload(Site.devices)
-        ).all()
-        positions = get_topology_positions()
-
-        # Device counts per site
-        site_device_counts = {}
-        site_down_counts = {}
-        for site in sites:
-            total = 0
-            down = 0
-            for d in site.devices:
-                total += 1
-                if not d.status:
-                    down += 1
-            site_device_counts[site.id] = total
-            site_down_counts[site.id] = down
-
-        # Site status
-        def site_status(total, down):
-            if total == 0: return "GREEN"
-            if down == total: return "RED"
-            if down > 0: return "YELLOW"
-            return "GREEN"
-
-        nodes = []
-        needs_layout = False
-        for site in sites:
-            total = site_device_counts.get(site.id, 0)
-            down = site_down_counts.get(site.id, 0)
-            pos = positions.get(site.id)
-            node = {
-                "data": {
-                    "id": f"site-{site.id}",
-                    "label": site.name,
-                    "status": site_status(total, down),
-                    "status_bool": down == 0,
-                    "location": site.location.name if site.location else "",
-                    "location_id": site.location_id,
-                    "device_count": total,
-                    "down_count": down,
-                    "type": "site"
-                }
-            }
-            if pos:
-                node["position"] = {"x": pos["x"], "y": pos["y"]}
-            else:
-                needs_layout = True
-            nodes.append(node)
-
-        links = session.query(Link).options(
-            selectinload(Link.source),
-            selectinload(Link.destination),
-            selectinload(Link.device_a_ref),
-            selectinload(Link.device_b_ref)
-        ).all()
-        edges = []
-        seen = set()
-        for link in links:
-            if not link.source_site or not link.destination_site:
-                continue
-            key = (link.source_site, link.destination_site)
-            if key in seen:
-                continue
-            seen.add(key)
-            last_check_str = link.last_checked.strftime("%Y-%m-%d %H:%M:%S") if link.last_checked else ""
-            edge_label = ""
-            if link.device_a_ref and link.device_b_ref:
-                edge_label = f"{link.device_a_ref.hostname} \u2194 {link.device_b_ref.hostname}"
-            edges.append({
-                "data": {
-                    "id": f"link-{link.id}",
-                    "source": f"site-{link.source_site}",
-                    "target": f"site-{link.destination_site}",
-                    "label": edge_label,
-                    "status": link.status,
-                    "source_site_name": link.source.name if link.source else "",
-                    "destination_site_name": link.destination.name if link.destination else "",
-                    "device_a": link.device_a_ref.hostname if link.device_a_ref else "",
-                    "device_a_ip": link.device_a_ref.ip if link.device_a_ref else "",
-                    "device_a_model": link.device_a_ref.model if link.device_a_ref else "",
-                    "device_b": link.device_b_ref.hostname if link.device_b_ref else "",
-                    "device_b_ip": link.device_b_ref.ip if link.device_b_ref else "",
-                    "device_b_model": link.device_b_ref.model if link.device_b_ref else "",
-                    "last_checked": last_check_str
-                }
-            })
-
-        elapsed = _time.perf_counter() - t0
-        print(f"[DB] full_topology() -> {len(nodes)} sites, {len(edges)} edges, needs_layout={needs_layout} ({elapsed:.3f}s)")
-        return {"nodes": nodes, "edges": edges, "needs_layout": needs_layout}
-    finally:
-        session.close()
-
-def invalidate_topology_cache():
-    print("[CACHE] topology cache invalidated (no-op)")
-
-def location_topology():
-    t0 = _time.perf_counter()
-    print("[DB] location_topology()")
-    session = SessionLocal()
-    try:
-        locations = session.query(Location).options(
-            selectinload(Location.sites).selectinload(Site.devices)
-        ).all()
-
-        loc_nodes = []
-        loc_count = len(locations)
-        for idx, loc in enumerate(locations):
-            total = 0
-            down = 0
-            for site in loc.sites:
-                for d in site.devices:
-                    total += 1
-                    if not d.status:
-                        down += 1
-            if total == 0:
-                status = "GREEN"
-            elif down == total:
-                status = "RED"
-            elif down > 0:
-                status = "YELLOW"
-            else:
-                status = "GREEN"
-            loc_nodes.append({
-                "data": {
-                    "id": f"loc-{loc.id}",
-                    "label": loc.name,
-                    "status": status,
-                    "type": "location",
-                    "location_id": loc.id,
-                    "device_count": total,
-                    "down_count": down,
-                    "site_count": len(loc.sites)
-                },
-                "position": {"x": float(idx * 2000), "y": 0.0}
-            })
-
-        # Collapsed inter-location edges with link counts
-        links = session.query(Link).options(
-            selectinload(Link.source),
-            selectinload(Link.destination)
-        ).all()
-        loc_edges = []
-        pair_counts = {}
-        for link in links:
-            src = link.source
-            dst = link.destination
-            if not src or not dst:
-                continue
-            if src.location_id == dst.location_id:
-                continue
-            key = tuple(sorted([src.location_id, dst.location_id]))
-            if key not in pair_counts:
-                src_loc = src.location
-                dst_loc = dst.location
-                pair_counts[key] = {
-                    "src_loc_name": src_loc.name if src_loc else "",
-                    "dst_loc_name": dst_loc.name if dst_loc else "",
-                    "count": 0,
-                    "status": True
-                }
-            pair_counts[key]["count"] += 1
-            if not link.status:
-                pair_counts[key]["status"] = False
-
-        for (loc_a, loc_b), val in pair_counts.items():
-            loc_edges.append({
-                "data": {
-                    "id": f"loc-edge-{loc_a}-{loc_b}",
-                    "source": f"loc-{loc_a}",
-                    "target": f"loc-{loc_b}",
-                    "label": f"{val['src_loc_name']} \u2194 {val['dst_loc_name']} ({val['count']} links)",
-                    "status": val['status']
-                }
-            })
-
-        elapsed = _time.perf_counter() - t0
-        print(f"[DB] location_topology() -> {len(loc_nodes)} locations, {len(loc_edges)} edges ({elapsed:.3f}s)")
-        return {"nodes": loc_nodes, "edges": loc_edges}
-    finally:
-        session.close()
-
-def location_sites(location_id):
-    t0 = _time.perf_counter()
-    print(f"[DB] location_sites(location_id={location_id})")
-    session = SessionLocal()
-    try:
-        sites = session.query(Site).options(
-            selectinload(Site.devices)
-        ).filter(Site.location_id == location_id).all()
-        positions = get_topology_positions()
-
-        site_nodes = []
-        for site in sites:
-            total = len(site.devices)
-            down = sum(1 for d in site.devices if not d.status)
-            if total == 0:
-                status = "GREEN"
-            elif down == total:
-                status = "RED"
-            elif down > 0:
-                status = "YELLOW"
-            else:
-                status = "GREEN"
-            pos = positions.get(site.id)
-            node = {
-                "data": {
-                    "id": f"site-{site.id}",
-                    "label": site.name,
-                    "status": status,
-                    "type": "site",
-                    "location_id": location_id,
-                    "device_count": total,
-                    "down_count": down
-                }
-            }
-            if pos:
-                node["position"] = {"x": pos["x"], "y": pos["y"]}
-            site_nodes.append(node)
-
-        # All links where source OR dest is in this location
-        site_ids = [s.id for s in sites]
-        all_links = session.query(Link).options(
-            selectinload(Link.source),
-            selectinload(Link.destination),
-            selectinload(Link.device_a_ref),
-            selectinload(Link.device_b_ref)
-        ).filter(
-            (Link.source_site.in_(site_ids)) | (Link.destination_site.in_(site_ids))
-        ).all()
-
-        edges = []
-        seen = set()
-        for link in all_links:
-            if not link.source_site or not link.destination_site:
-                continue
-            key = (link.source_site, link.destination_site)
-            if key in seen:
-                continue
-            seen.add(key)
-            last_check_str = link.last_checked.strftime("%Y-%m-%d %H:%M:%S") if link.last_checked else ""
-            edge_label = ""
-            if link.device_a_ref and link.device_b_ref:
-                edge_label = f"{link.device_a_ref.hostname} \u2194 {link.device_b_ref.hostname}"
-            edges.append({
-                "data": {
-                    "id": f"link-{link.id}",
-                    "source": f"site-{link.source_site}",
-                    "target": f"site-{link.destination_site}",
-                    "label": edge_label,
-                    "status": link.status,
-                    "source_site_name": link.source.name if link.source else "",
-                    "destination_site_name": link.destination.name if link.destination else "",
-                    "source_location_id": link.source.location_id if link.source else None,
-                    "destination_location_id": link.destination.location_id if link.destination else None,
-                    "device_a": link.device_a_ref.hostname if link.device_a_ref else "",
-                    "device_a_ip": link.device_a_ref.ip if link.device_a_ref else "",
-                    "device_a_model": link.device_a_ref.model if link.device_a_ref else "",
-                    "device_b": link.device_b_ref.hostname if link.device_b_ref else "",
-                    "device_b_ip": link.device_b_ref.ip if link.device_b_ref else "",
-                    "device_b_model": link.device_b_ref.model if link.device_b_ref else "",
-                    "last_checked": last_check_str
-                }
-            })
-
-        elapsed = _time.perf_counter() - t0
-        print(f"[DB] location_sites({location_id}) -> {len(site_nodes)} sites, {len(edges)} edges ({elapsed:.3f}s)")
-        return {"nodes": site_nodes, "edges": edges}
-    finally:
-        session.close()
-
-def site_devices(site_id):
-    t0 = _time.perf_counter()
-    print(f"[DB] site_devices(site_id={site_id})")
-    session = SessionLocal()
-    try:
-        devices = session.query(Device).filter(Device.site_id == site_id).all()
-        site_pos = session.query(TopologyNode).filter(
-            TopologyNode.site_id == site_id
-        ).first()
-        base_x = site_pos.x_percent if site_pos else 0.0
-        base_y = site_pos.y_percent if site_pos else 0.0
-
-        dev_count = len(devices)
-        cols = max(1, DEVICE_COLS)
-        nodes = []
-        for i, d in enumerate(devices):
-            row = i // cols
-            col = i % cols
-            x = base_x + col * DEVICE_SPACING_X - (min(dev_count, cols) - 1) * DEVICE_SPACING_X / 2
-            y = base_y + 50 + row * DEVICE_SPACING_Y
-            nodes.append({
-                "data": {
-                    "id": f"device-{d.id}",
-                    "label": d.hostname,
-                    "status": d.status,
-                    "type": "device",
-                    "ip": d.ip,
-                    "model": d.model,
-                    "category": d.category,
-                    "site_id": site_id
-                },
-                "position": {"x": float(x), "y": float(y)}
-            })
-        elapsed = _time.perf_counter() - t0
-        print(f"[DB] site_devices({site_id}) -> {len(nodes)} devices ({elapsed:.3f}s)")
-        return {"nodes": nodes}
-    finally:
-        session.close()
-
-def get_all_sites():
-    print("[DB] get_all_sites()")
-    session=SessionLocal()
-    try:
-        sites=session.query(Site).options(selectinload(Site.location),selectinload(Site.devices)).all()
-        print(f"[DB] get_all_sites() -> {len(sites)} sites")
-        return sites
-    finally:
-        session.close()
-
-def get_all_locations():
-    print("[DB] get_all_locations()")
-    session=SessionLocal()
-    try:
-        locs=session.query(Location).options(selectinload(Location.sites)).all()
-        print(f"[DB] get_all_locations() -> {len(locs)} locations")
-        return locs
-    finally:
-        session.close()
-
-def add_location(name):
-    print(f"[DB] add_location(name={name})")
-    session=SessionLocal()
-    try:
-        existing=session.query(Location).filter(Location.name==name).first()
+        existing = session.query(Device).filter(Device.ip == ip).first()
         if existing:
-            print(f"[DB] add_location({name}) -> already exists")
+            print(f"[DB] add_device({ip}) -> already exists")
             return False
-        location=Location(name=name)
-        session.add(location)
-        session.commit()
-        print(f"[DB] add_location({name}) -> id={location.id}")
-        return location
-    except Exception as e:
-        session.rollback()
-        print(f"[DB] add_location({name}) -> error: {e}")
-        return e
-    finally:
-        session.close()
-
-def add_site(name, location_id):
-    print(f"[DB] add_site(name={name}, location_id={location_id})")
-    session=SessionLocal()
-    try:
-        existing=session.query(Site).filter(Site.name==name, Site.location_id==location_id).first()
-        if existing:
-            print(f"[DB] add_site({name}) -> already exists")
-            return False
-        site=Site(name=name, location_id=location_id)
-        session.add(site)
-        session.commit()
-        print(f"[DB] add_site({name}) -> id={site.id}")
-        invalidate_topology_cache()
-        return site
-    except Exception as e:
-        session.rollback()
-        print(f"[DB] add_site({name}) -> error: {e}")
-        return e
-    finally:
-        session.close()
-
-def add_device(hostname, ip, model, category, site_id):
-    print(f"[DB] add_device(hostname={hostname}, ip={ip}, model={model}, category={category}, site_id={site_id})")
-    session=SessionLocal()
-    try:
-        device=Device(hostname=hostname, ip=ip, model=model, category=category, site_id=site_id)
+        cat = _get_or_create_category(session, category)
+        device = Device(
+            ip=ip,
+            hostname=device_name,
+            device_name=device_name,
+            model=model,
+            category_id=cat.id,
+            location=location
+        )
         session.add(device)
         session.commit()
-        print(f"[DB] add_device({hostname}) -> id={device.id}")
-        invalidate_topology_cache()
+        print(f"[DB] add_device({ip}) -> ok")
         return device
     except Exception as e:
         session.rollback()
-        print(f"[DB] add_device({hostname}) -> error: {e}")
+        print(f"[DB] add_device({ip}) -> error: {e}")
         return e
     finally:
         session.close()
 
-def add_link(source_site_id, dest_site_id, device_a_id=None, device_b_id=None):
-    print(f"[DB] add_link(source={source_site_id}, dest={dest_site_id})")
-    session=SessionLocal()
-    try:
-        link=Link(source_site=source_site_id, destination_site=dest_site_id,
-                  device_a=device_a_id, device_b=device_b_id)
-        session.add(link)
-        session.commit()
-        print(f"[DB] add_link() -> id={link.id}")
-        invalidate_topology_cache()
-        return link
-    except Exception as e:
-        session.rollback()
-        print(f"[DB] add_link() -> error: {e}")
-        return e
-    finally:
-        session.close()
 
-def get_topology_positions():
-    print("[DB] get_topology_positions()")
-    session=SessionLocal()
+def update_device(ip, device_name=None, model=None, category=None, location=None):
+    session = SessionLocal()
     try:
-        nodes=session.query(TopologyNode).all()
-        result = {n.site_id: {"x": n.x_percent, "y": n.y_percent, "pinned": n.pinned, "priority": n.priority} for n in nodes}
-        print(f"[DB] get_topology_positions() -> {len(result)} entries")
-        return result
-    finally:
-        session.close()
-
-def save_topology_position(site_id, x_percent, y_percent, pinned=False):
-    print(f"[DB] save_topology_position(site_id={site_id}, x={x_percent}, y={y_percent})")
-    session=SessionLocal()
-    try:
-        node=session.query(TopologyNode).filter(TopologyNode.site_id==site_id).first()
-        if node:
-            print(f"[DB]   updating existing topology_nodes row id={node.id}")
-            node.x_percent=x_percent
-            node.y_percent=y_percent
-            node.pinned=pinned
-        else:
-            print(f"[DB]   inserting new topology_nodes row")
-            node=TopologyNode(site_id=site_id, x_percent=x_percent, y_percent=y_percent, pinned=pinned)
-            session.add(node)
-        session.commit()
-        print("[DB]   save OK")
-        return True
-    except Exception as e:
-        session.rollback()
-        print(f"[DB]   save error: {e}")
-        return e
-    finally:
-        session.close()
-
-def auto_place_site(site_id):
-    print(f"[DB] auto_place_site(site_id={site_id})")
-    session=SessionLocal()
-    try:
-        existing=session.query(TopologyNode).filter(TopologyNode.site_id==site_id).first()
-        if existing:
-            return existing
-        # find linked sites that already have positions
-        links=session.query(Link).filter(
-            (Link.source_site==site_id) | (Link.destination_site==site_id)
-        ).all()
-        placed=session.query(TopologyNode).all()
-        if placed:
-            # place near the average of connected placed sites
-            xs, ys = [], []
-            for link in links:
-                other_id = link.destination_site if link.source_site==site_id else link.source_site
-                pos = next((p for p in placed if p.site_id==other_id), None)
-                if pos:
-                    xs.append(pos.x_percent)
-                    ys.append(pos.y_percent)
-            if xs:
-                x = sum(xs)/len(xs) + 5
-                y = sum(ys)/len(ys) + 5
-            else:
-                avg_x = sum(p.x_percent for p in placed)/len(placed)
-                avg_y = sum(p.y_percent for p in placed)/len(placed)
-                x = avg_x + 10
-                y = avg_y + 10
-        else:
-            x, y = 50.0, 50.0
-        node=TopologyNode(site_id=site_id, x_percent=x, y_percent=y)
-        session.add(node)
-        session.commit()
-        return node
-    except Exception as e:
-        session.rollback()
-        return e
-    finally:
-        session.close()
-
-def update_location(location_id, name):
-    session=SessionLocal()
-    try:
-        loc=session.get(Location, location_id)
-        if not loc:
-            return False
-        loc.name=name
-        session.commit()
-        return loc
-    except Exception as e:
-        session.rollback()
-        return e
-    finally:
-        session.close()
-
-def delete_location(location_id):
-    session=SessionLocal()
-    try:
-        loc=session.get(Location, location_id)
-        if not loc:
-            return False
-        session.delete(loc)
-        session.commit()
-        return True
-    except Exception as e:
-        session.rollback()
-        return e
-    finally:
-        session.close()
-
-def update_site(site_id, name, location_id):
-    session=SessionLocal()
-    try:
-        site=session.get(Site, site_id)
-        if not site:
-            return False
-        site.name=name
-        site.location_id=location_id
-        session.commit()
-        return site
-    except Exception as e:
-        session.rollback()
-        return e
-    finally:
-        session.close()
-
-def delete_site(site_id):
-    session=SessionLocal()
-    try:
-        site=session.get(Site, site_id)
-        if not site:
-            return False
-        session.delete(site)
-        session.commit()
-        print(f"[DB] delete_site({site_id}) -> ok")
-        invalidate_topology_cache()
-        return True
-    except Exception as e:
-        session.rollback()
-        return e
-    finally:
-        session.close()
-
-def get_all_devices():
-    print("[DB] get_all_devices()")
-    session=SessionLocal()
-    try:
-        devs=session.query(Device).options(selectinload(Device.site).selectinload(Site.location)).all()
-        print(f"[DB] get_all_devices() -> {len(devs)} devices")
-        return devs
-    finally:
-        session.close()
-
-def update_device(device_id, hostname, ip, model, category, site_id):
-    session=SessionLocal()
-    try:
-        dev=session.get(Device, device_id)
+        dev = session.query(Device).filter(Device.ip == ip).first()
         if not dev:
             return False
-        dev.hostname=hostname
-        dev.ip=ip
-        dev.model=model
-        dev.category=category
-        dev.site_id=site_id
+        if device_name is not None:
+            dev.device_name = device_name
+            if not dev.hostname:
+                dev.hostname = device_name
+        if model is not None:
+            dev.model = model
+        if category is not None:
+            cat = _get_or_create_category(session, category)
+            dev.category_id = cat.id
+        if location is not None:
+            dev.location = location
         session.commit()
         return dev
     except Exception as e:
@@ -664,10 +120,11 @@ def update_device(device_id, hostname, ip, model, category, site_id):
     finally:
         session.close()
 
-def delete_device(device_id):
-    session=SessionLocal()
+
+def delete_device(ip):
+    session = SessionLocal()
     try:
-        dev=session.get(Device, device_id)
+        dev = session.query(Device).filter(Device.ip == ip).first()
         if not dev:
             return False
         session.delete(dev)
@@ -679,66 +136,26 @@ def delete_device(device_id):
     finally:
         session.close()
 
-def get_details_paginated(page=1, per_page=20, sort_by="id", sort_dir="asc"):
-    session=SessionLocal()
-    try:
-        q = session.query(Device).options(
-            selectinload(Device.site).selectinload(Site.location)
-        )
-        total = q.count()
-        sort_map = {
-            "location": Site.location_id,
-            "site": Site.name,
-            "hostname": Device.hostname,
-            "ip": Device.ip,
-            "model": Device.model,
-            "category": Device.category,
-            "status": Device.status,
-        }
-        col = sort_map.get(sort_by, Device.id)
-        if sort_dir == "desc":
-            col = col.desc()
-        else:
-            col = col.asc()
-        if sort_by in ("location", "site"):
-            q = q.join(Site)
-            col = sort_map[sort_by]
-            if sort_dir == "desc":
-                col = col.desc()
-        devices = q.order_by(col, Device.id).offset((page-1)*per_page).limit(per_page).all()
-        rows=[]
-        for d in devices:
-            rows.append({
-                "location": d.site.location.name if d.site and d.site.location else "",
-                "site": d.site.name if d.site else "",
-                "hostname": d.hostname,
-                "ip": d.ip,
-                "model": d.model,
-                "category": d.category,
-                "status": "Up" if d.status else "Down"
-            })
-        return rows, total
-    finally:
-        session.close()
 
 def add_devices_bulk(devices_data):
-    session=SessionLocal()
-    added=[]
-    errors=[]
+    session = SessionLocal()
+    added = []
+    errors = []
     try:
         for d in devices_data:
-            existing=session.query(Device).filter(
-                (Device.hostname==d["hostname"]) | (Device.ip==d["ip"])
-            ).first()
+            existing = session.query(Device).filter(Device.ip == d["ip"]).first()
             if existing:
-                errors.append(f"Duplicate hostname/IP: {d['hostname']}/{d['ip']}")
+                errors.append(f"Duplicate IP: {d['ip']}")
                 continue
-            device=Device(
-                hostname=d["hostname"],
+            dn = d.get("device_name", d.get("hostname", ""))
+            cat = _get_or_create_category(session, d.get("category", "radio"))
+            device = Device(
                 ip=d["ip"],
-                model=d["model"],
-                category=d["category"],
-                site_id=d["site_id"]
+                hostname=dn,
+                device_name=dn,
+                model=d.get("model", ""),
+                category_id=cat.id,
+                location=d.get("location", "")
             )
             session.add(device)
             added.append(device)
@@ -750,166 +167,631 @@ def add_devices_bulk(devices_data):
         session.close()
     return added, errors
 
-def all_devices_status():
+
+def add_link(source_ip, destination_ip, remark=None, status=True, link_type=None, bandwidth=None):
+    print(f"[DB] add_link(source={source_ip}, dest={destination_ip})")
     session = SessionLocal()
     try:
-        devices = session.query(Device).options(
-            selectinload(Device.site).selectinload(Site.location)
+        existing = (
+            session.query(NetworkLink)
+            .filter(
+                NetworkLink.source_ip == source_ip,
+                NetworkLink.destination_ip == destination_ip,
+            )
+            .first()
+        )
+        if existing:
+            print(f"[DB] add_link() -> duplicate rejected")
+            return None
+        link = NetworkLink(
+            source_ip=source_ip,
+            destination_ip=destination_ip,
+            remark=remark,
+            status=status,
+            link_type=link_type,
+            bandwidth=bandwidth
+        )
+        session.add(link)
+        session.commit()
+        print(f"[DB] add_link() -> id={link.id}")
+        return link
+    except Exception as e:
+        session.rollback()
+        print(f"[DB] add_link() -> error: {e}")
+        return e
+    finally:
+        session.close()
+
+
+def get_details_paginated(page=1, per_page=20, sort_by="ip", sort_dir="asc", search=""):
+    session = SessionLocal()
+    try:
+        q = session.query(Device)
+        if search:
+            s = f"%{search}%"
+            q = q.filter(or_(
+                Device.ip.like(s),
+                Device.device_name.like(s),
+                Device.model.like(s),
+                Device.location.like(s),
+            ))
+        total = q.count()
+        sort_map = {
+            "ip": Device.ip,
+            "device_name": Device.device_name,
+            "location": Device.location,
+            "model": Device.model,
+            "status": Device.status,
+        }
+        if sort_by == "category":
+            q = q.join(Category)
+            col = Category.name
+        else:
+            col = sort_map.get(sort_by, Device.ip)
+        if sort_dir == "desc":
+            col = col.desc()
+        devices = q.order_by(col).offset((page - 1) * per_page).limit(per_page).all()
+        rows = []
+        for d in devices:
+            last_seen_str = d.last_seen.strftime("%Y-%m-%d %H:%M:%S") if d.last_seen else None
+            rows.append({
+                "ip": d.ip,
+                "device_name": d.device_name,
+                "hostname": d.hostname or "",
+                "location": d.location,
+                "model": d.model,
+                "category": d.category_obj.name if d.category_obj else "",
+                "status": d.status,
+                "last_seen": last_seen_str,
+            })
+        return rows, total
+    finally:
+        session.close()
+
+
+def derive_node_status(ip, links):
+    attached = [l for l in links if l.source_ip == ip or l.destination_ip == ip]
+    if not attached:
+        return "GREEN", True
+    up_count = sum(1 for l in attached if l.status)
+    if up_count == len(attached):
+        return "GREEN", True
+    elif up_count == 0:
+        return "RED", False
+    else:
+        return "YELLOW", False
+
+
+def get_ip_topology():
+    t0 = _time.perf_counter()
+    print("[DB] get_ip_topology()")
+    session = SessionLocal()
+    try:
+        devices = session.query(Device).all()
+        device_map = {d.ip: d for d in devices}
+        device_ids = {d.category_id for d in devices}
+
+        links = session.query(NetworkLink).options(
+            selectinload(NetworkLink.source_device),
+            selectinload(NetworkLink.destination_device)
+        ).filter(
+            NetworkLink.source_ip.in_([d.ip for d in devices])
+        ).all()
+        links = [l for l in links
+                 if l.source_device
+                 and l.source_device.category_id in device_ids]
+
+        location_groups = {}
+        for d in devices:
+            loc = d.location or "Unknown"
+            if loc not in location_groups:
+                location_groups[loc] = []
+            location_groups[loc].append(d.ip)
+
+        nodes = []
+        loc_index = 0
+        loc_cols = 4
+        for loc, ips in location_groups.items():
+            base_x = (loc_index % loc_cols) * 600
+            base_y = (loc_index // loc_cols) * 500
+            for i, ip in enumerate(ips):
+                d = device_map.get(ip)
+                node_status, status_bool = derive_node_status(ip, links)
+                label = d.hostname or d.device_name or ip if d else ip
+                nodes.append({
+                    "data": {
+                        "id": ip,
+                        "label": d.hostname or d.device_name or ip,
+                        "status": node_status,
+                        "status_bool": status_bool,
+                        "location": loc,
+                        "type": "device",
+                        "device_name": d.device_name if d else "",
+                        "hostname": d.hostname if d else "",
+                        "model": d.model if d else "",
+                        "category": d.category_obj.name if d and d.category_obj else "radio",
+                        "remark": d.remark if d else "",
+                        "tooltip": ip
+                    },
+                    "position": {
+                        "x": float(base_x + 150 * 1.5 + 150 * 1.5 * (i % 2)),
+                        "y": float(base_y + 80 + (i // 2) * 120)
+                    }
+                })
+            loc_index += 1
+
+        edges = []
+        for link in links:
+            if not link.destination_ip:
+                continue
+            src = device_map.get(link.source_ip)
+            dst = device_map.get(link.destination_ip)
+            last_check_str = link.last_checked.strftime("%Y-%m-%d %H:%M:%S") if link.last_checked else ""
+            edges.append({
+                "data": {
+                    "id": f"link-{link.id}",
+                    "source": link.source_ip,
+                    "target": link.destination_ip,
+                    "label": link.remark or "",
+                    "status": link.status,
+                    "link_type": link.link_type or "",
+                    "bandwidth": link.bandwidth or "",
+                    "source_location": src.location if src else "",
+                    "destination_location": dst.location if src else "",
+                    "source_device_name": src.device_name if src else "",
+                    "destination_device_name": dst.device_name if dst else "",
+                    "last_checked": last_check_str,
+                    "latency_ms": link.latency_ms,
+                    "relationship": ""
+                }
+            })
+
+        node_ids = {n["data"]["id"] for n in nodes}
+
+        # Category-based hierarchy: lower number = higher in tree
+        CATEGORY_HIERARCHY = {
+            "core": 0,
+            "distribution": 1,
+            "switch": 1,
+            "access": 2,
+            "ap": 3,
+            "access point": 3,
+            "camera": 3,
+            "end device": 4,
+            "radio": 2,
+        }
+
+        def get_category_tier(cat_name):
+            if not cat_name:
+                return 5
+            return CATEGORY_HIERARCHY.get(cat_name.lower().strip(), 5)
+
+        device_tier = {}
+        for n in nodes:
+            ip = n["data"]["id"]
+            cat = n["data"].get("category", "")
+            tier = get_category_tier(cat)
+            device_tier[ip] = tier
+            n["data"]["level"] = tier
+            n["data"]["role"] = cat.lower().strip() if cat else "unknown"
+
+        for e in edges:
+            src = e["data"]["source"]
+            tgt = e["data"]["target"]
+            src_tier = device_tier.get(src, 5)
+            tgt_tier = device_tier.get(tgt, 5)
+
+            if src_tier < tgt_tier:
+                e["data"]["relationship"] = "child"
+            elif src_tier == tgt_tier:
+                e["data"]["relationship"] = "link"
+            else:
+                e["data"]["source"], e["data"]["target"] = tgt, src
+                e["data"]["relationship"] = "child"
+
+        from collections import deque
+        in_edges = {}
+        for e in edges:
+            if e["data"]["relationship"] == "child":
+                t = e["data"]["target"]
+                s = e["data"]["source"]
+                in_edges.setdefault(t, []).append(s)
+        roots = [n["data"]["id"] for n in nodes if n["data"]["id"] not in in_edges]
+        visited = set()
+        queue = deque()
+        for r in roots:
+            queue.append(r)
+            visited.add(r)
+        while queue:
+            current = queue.popleft()
+            for e in edges:
+                if e["data"]["relationship"] == "child" and e["data"]["source"] == current and e["data"]["target"] not in in_edges:
+                    if e["data"]["target"] not in visited:
+                        visited.add(e["data"]["target"])
+                        queue.append(e["data"]["target"])
+        for e in edges:
+            if e["data"]["relationship"] == "":
+                e["data"]["relationship"] = "link"
+
+        elapsed = _time.perf_counter() - t0
+        print(f"[DB] get_ip_topology() -> {len(nodes)} nodes, {len(edges)} edges ({elapsed:.3f}s)")
+        return {"nodes": nodes, "edges": edges}
+    finally:
+        session.close()
+
+
+# Backward-compatible alias
+get_topology = get_ip_topology
+
+
+def get_locations():
+    print("[DB] get_locations()")
+    session = SessionLocal()
+    try:
+        rows = session.query(Device.location, func.count(Device.ip)).group_by(Device.location).all()
+        result = []
+        for loc, count in rows:
+            total = count
+            down = session.query(Device).filter(Device.location == loc, Device.status == False).count()
+            result.append({
+                "name": loc,
+                "device_count": total,
+                "down_count": down,
+                "status": "GREEN" if down == 0 else ("RED" if down == total else "YELLOW")
+            })
+        print(f"[DB] get_locations() -> {len(result)} locations")
+        return result
+    finally:
+        session.close()
+
+
+def get_location_devices(location_name):
+    print(f"[DB] get_location_devices(location_name={location_name})")
+    session = SessionLocal()
+    try:
+        devices = session.query(Device).filter(Device.location == location_name).all()
+        return [
+            {
+                "ip": d.ip,
+                "device_name": d.device_name,
+                "model": d.model,
+                "category": d.category_obj.name if d.category_obj else "",
+                "status": d.status
+            }
+            for d in devices
+        ]
+    finally:
+        session.close()
+
+
+def get_location_links(location_name):
+    print(f"[DB] get_location_links(location_name={location_name})")
+    session = SessionLocal()
+    try:
+        devices = session.query(Device.ip).filter(Device.location == location_name).all()
+        ips = [d[0] for d in devices]
+        links = session.query(NetworkLink).options(
+            selectinload(NetworkLink.source_device),
+            selectinload(NetworkLink.destination_device)
+        ).filter(
+            (NetworkLink.source_ip.in_(ips)) | (NetworkLink.destination_ip.in_(ips))
+        ).all()
+        return [
+            {
+                "id": link.id,
+                "source_ip": link.source_ip,
+                "destination_ip": link.destination_ip,
+                "status": link.status,
+                "remark": link.remark,
+                "source_device_name": link.source_device.device_name if link.source_device else "",
+                "destination_device_name": link.destination_device.device_name if link.destination_device else "",
+                "source_location": link.source_device.location if link.source_device else "",
+                "destination_location": link.destination_device.location if link.destination_device else ""
+            }
+            for link in links
+        ]
+    finally:
+        session.close()
+
+
+def get_device_by_ip(ip):
+    session = SessionLocal()
+    try:
+        return session.query(Device).filter(Device.ip == ip).first()
+    finally:
+        session.close()
+
+
+def get_links_for_device(ip):
+    session = SessionLocal()
+    try:
+        cat_names = set(category_list())
+        links = session.query(NetworkLink).options(
+            selectinload(NetworkLink.source_device),
+            selectinload(NetworkLink.destination_device)
+        ).filter(
+            (NetworkLink.source_ip == ip) | (NetworkLink.destination_ip == ip)
         ).all()
         result = []
-        for device in devices:
-            last_seen_str = device.last_seen.strftime("%Y-%m-%d %H:%M:%S") if device.last_seen else None
+        for link in links:
+            src = link.source_device
+            if not src:
+                continue
+            src_cat = src.category_obj.name if src.category_obj else ""
+            if src_cat not in cat_names:
+                continue
+            if link.source_ip == ip:
+                other = link.destination_device
+            else:
+                other = src
             result.append({
-                "id": str(device.id),
-                "label": device.hostname,
-                "ip": device.ip,
-                "status": device.status,
-                "category": device.category,
-                "site": device.site.name,
-                "location": device.site.location.name,
-                "last_seen": last_seen_str
+                "id": link.id,
+                "other_ip": other.ip if other else "",
+                "other_device_name": other.device_name if other else "",
+                "other_location": other.location if other else "",
+                "status": link.status,
+                "remark": link.remark
             })
         return result
     finally:
         session.close()
 
-import json
-import math
 
-LOCATION_GRID_X = 0
-SITE_SPACING_X = 280
-SITE_SPACING_Y = 200
-SITE_COLS = 4
-DEVICE_SPACING_X = 120
-DEVICE_SPACING_Y = 80
-DEVICE_COLS = 5
-
-def generate_grid_positions():
-    t0 = _time.perf_counter()
-    print("[DB] generate_grid_positions()")
+def get_devices_stats():
     session = SessionLocal()
     try:
-        locations = session.query(Location).order_by(Location.id).all()
-        count = 0
-        for loc_idx, loc in enumerate(locations):
-            loc_x = loc_idx * 2000
-            sites = session.query(Site).filter(
-                Site.location_id == loc.id
-            ).order_by(Site.name).all()
-            for idx, site in enumerate(sites):
-                row = idx // SITE_COLS
-                col = idx % SITE_COLS
-                x = loc_x + col * SITE_SPACING_X
-                y = row * SITE_SPACING_Y
-                existing = session.query(TopologyNode).filter(
-                    TopologyNode.site_id == site.id
-                ).first()
-                if existing:
-                    existing.x_percent = float(x)
-                    existing.y_percent = float(y)
-                else:
-                    node = TopologyNode(
-                        site_id=site.id,
-                        x_percent=float(x),
-                        y_percent=float(y)
-                    )
-                    session.add(node)
-                count += 1
+        stats = []
+        total = 0
+        total_up = 0
+        for cat_obj in session.query(Category).all():
+            cnt = session.query(Device).filter(Device.category_id == cat_obj.id).count()
+            up = session.query(Device).filter(Device.category_id == cat_obj.id, Device.status == True).count()
+            down = cnt - up
+            total += cnt
+            total_up += up
+            stats.append({"category": cat_obj.name, "total": cnt, "up": up, "down": down})
+        return {"categories": stats, "total": total, "up": total_up, "down": total - total_up}
+    finally:
+        session.close()
+
+
+def get_all_links():
+    session = SessionLocal()
+    try:
+        links = session.query(NetworkLink).options(
+            selectinload(NetworkLink.source_device),
+            selectinload(NetworkLink.destination_device)
+        ).all()
+        return [
+            {
+                "id": link.id,
+                "source_ip": link.source_ip,
+                "destination_ip": link.destination_ip,
+                "link_type": link.link_type,
+                "status": link.status,
+                "latency_ms": link.latency_ms,
+                "bandwidth": link.bandwidth,
+                "remark": link.remark,
+                "source_device_name": link.source_device.device_name if link.source_device else "",
+                "destination_device_name": link.destination_device.device_name if link.destination_device else "",
+                "source_location": link.source_device.location if link.source_device else "",
+                "destination_location": link.destination_device.location if link.destination_device else ""
+            }
+            for link in links
+        ]
+    finally:
+        session.close()
+
+
+def get_links_paginated(page=1, per_page=20, search_ip="", filter_status="",
+                        filter_category="", filter_location="",
+                        sort_by="id", sort_order="desc"):
+    """
+    Returns (links_list, total_count, total_pages) with server-side filtering, sorting and pagination.
+
+    Filters:
+      search_ip       – substring match against source_ip OR destination_ip
+      filter_status   – "up" | "down" | "" (all)
+      filter_category – device category on either endpoint ("radio", "ap", etc.)
+      filter_location – location string on either endpoint
+    Sort:
+      sort_by    – column key (id, source_ip, destination_ip, source_location,
+                   destination_location, remark, status)
+      sort_order – "asc" or "desc"
+    """
+    from sqlalchemy.orm import aliased
+
+    _SORT_MAP = {
+        "id": NetworkLink.id,
+        "source_ip": NetworkLink.source_ip,
+        "destination_ip": NetworkLink.destination_ip,
+        "remark": NetworkLink.remark,
+        "status": NetworkLink.status,
+    }
+
+    session = SessionLocal()
+    try:
+        SrcDev = aliased(Device, name="src_dev")
+        DstDev = aliased(Device, name="dst_dev")
+
+        _SORT_MAP["source_location"] = SrcDev.location
+        _SORT_MAP["destination_location"] = DstDev.location
+
+        q = (
+            session.query(NetworkLink)
+            .join(SrcDev, NetworkLink.source_ip == SrcDev.ip)
+            .outerjoin(DstDev, NetworkLink.destination_ip == DstDev.ip)
+        )
+
+        if filter_category:
+            q = q.join(Category, Category.name == filter_category)
+            q = q.filter(
+                or_(
+                    SrcDev.category_id == Category.id,
+                    DstDev.category_id == Category.id,
+                    DstDev.ip == None,
+                )
+            )
+
+        # IP search – matches source or destination
+        if search_ip:
+            s = f"%{search_ip}%"
+            q = q.filter(or_(
+                NetworkLink.source_ip.like(s),
+                NetworkLink.destination_ip.like(s),
+                SrcDev.device_name.like(s),
+                DstDev.device_name.like(s),
+            ))
+
+        # Status filter
+        if filter_status == "up":
+            q = q.filter(NetworkLink.status == True)
+        elif filter_status == "down":
+            q = q.filter(NetworkLink.status == False)
+
+        # Location filter (either endpoint)
+        if filter_location:
+            q = q.filter(or_(
+                SrcDev.location == filter_location,
+                DstDev.location == filter_location,
+            ))
+
+        total = q.count()
+
+        sort_col = _SORT_MAP.get(sort_by, NetworkLink.id)
+        if sort_order == "asc":
+            q = q.order_by(sort_col.asc().nullslast())
+        else:
+            q = q.order_by(sort_col.desc().nullsfirst())
+
+        links = (
+            q.offset((page - 1) * per_page)
+            .limit(per_page)
+            .all()
+        )
+
+        rows = []
+        for link in links:
+            src = link.source_device
+            dst = link.destination_device
+            rows.append({
+                "id": link.id,
+                "source_ip": link.source_ip,
+                "destination_ip": link.destination_ip,
+                "link_type": link.link_type or "",
+                "status": link.status,
+                "latency_ms": link.latency_ms,
+                "bandwidth": link.bandwidth or "",
+                "remark": link.remark or "",
+                "source_device_name": src.device_name if src else "",
+                "source_hostname": src.hostname if src else "",
+                "source_category": src.category_obj.name if src and src.category_obj else "",
+                "source_location": src.location if src else "",
+                "source_model": src.model if src else "",
+                "destination_device_name": dst.device_name if dst else "",
+                "destination_hostname": dst.hostname if dst else "",
+                "destination_category": dst.category_obj.name if dst and dst.category_obj else "",
+                "destination_location": dst.location if dst else "",
+                "destination_model": dst.model if dst else "",
+            })
+
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        return rows, total, total_pages
+
+    finally:
+        session.close()
+
+
+def get_link_filter_options():
+    """Returns distinct categories and locations present in linked devices."""
+    session = SessionLocal()
+    try:
+        linked_ips = select(NetworkLink.source_ip).union(select(NetworkLink.destination_ip)).scalar_subquery()
+        rows = (
+            session.query(Category.name, Device.location)
+            .join(Device, Device.category_id == Category.id)
+            .filter(Device.ip.in_(select(linked_ips)))
+            .distinct()
+            .all()
+        )
+        categories = sorted({r[0] for r in rows if r[0]})
+        locations = sorted({r[1] for r in rows if r[1]})
+        return categories, locations
+    finally:
+        session.close()
+
+
+def update_link(link_id, source_ip=None, destination_ip=None, link_type=None, status=None, bandwidth=None, remark=None):
+    session = SessionLocal()
+    try:
+        link = session.get(NetworkLink, link_id)
+        if not link:
+            return None
+        if source_ip is not None:
+            link.source_ip = source_ip
+        if destination_ip is not None:
+            link.destination_ip = destination_ip
+        if link_type is not None:
+            link.link_type = link_type
+        if status is not None:
+            link.status = status
+        if bandwidth is not None:
+            link.bandwidth = bandwidth
+        if remark is not None:
+            link.remark = remark
         session.commit()
-        elapsed = _time.perf_counter() - t0
-        print(f"[DB] generate_grid_positions() -> {count} positions set ({elapsed:.3f}s)")
-        return {"ok": True, "count": count}
+        return link
     except Exception as e:
         session.rollback()
-        print(f"[DB] generate_grid_positions() -> error: {e}")
-        return {"ok": False, "error": str(e)}
+        return e
     finally:
         session.close()
 
-def build_heartbeat_paths():
-    t0 = _time.perf_counter()
-    print("[DB] build_heartbeat_paths()")
+
+def delete_link(link_id):
     session = SessionLocal()
     try:
-        links = session.query(Link).options(
-            selectinload(Link.source),
-            selectinload(Link.destination),
-            selectinload(Link.device_a_ref),
-            selectinload(Link.device_b_ref)
-        ).filter(Link.status == True).all()
-
-        link_map = {}
-        for link in links:
-            if link.device_a_ref and link.device_b_ref:
-                a_id = f"device-{link.device_a_ref.id}"
-                b_id = f"device-{link.device_b_ref.id}"
-                link_id = f"link-{link.id}"
-                link_map.setdefault(a_id, []).append({
-                    "target": b_id,
-                    "link_id": link_id,
-                    "status": link.status,
-                    "source_site": link.source_site,
-                    "destination_site": link.destination_site
-                })
-                link_map.setdefault(b_id, []).append({
-                    "target": a_id,
-                    "link_id": link_id,
-                    "status": link.status,
-                    "source_site": link.destination_site,
-                    "destination_site": link.source_site
-                })
-
-        paths = []
-        used_devices = set()
-        for link in links[:20]:
-            if not link.device_a_ref or not link.device_b_ref:
-                continue
-            start = f"device-{link.device_a_ref.id}"
-            if start in used_devices:
-                continue
-            path_devices = [start]
-            path_links = [f"link-{link.id}"]
-            current = f"device-{link.device_b_ref.id}"
-            path_devices.append(current)
-            used_devices.add(start)
-
-            max_hops = 8
-            for _ in range(max_hops):
-                neighbors = link_map.get(current, [])
-                found = False
-                for nb in neighbors:
-                    if nb["target"] not in path_devices:
-                        path_devices.append(nb["target"])
-                        path_links.append(nb["link_id"])
-                        current = nb["target"]
-                        found = True
-                        break
-                if not found:
-                    break
-
-            if len(path_devices) >= 2:
-                paths.append({
-                    "id": f"path-{len(paths)+1}",
-                    "name": f"{path_devices[0]} → {path_devices[-1]}",
-                    "source_device": path_devices[0],
-                    "destination_device": path_devices[-1],
-                    "route_devices": path_devices,
-                    "route_links": path_links
-                })
-
-        elapsed = _time.perf_counter() - t0
-        print(f"[DB] build_heartbeat_paths() -> {len(paths)} paths ({elapsed:.3f}s)")
-        return {"paths": paths}
+        link = session.get(NetworkLink, link_id)
+        if not link:
+            return False
+        session.delete(link)
+        session.commit()
+        return True
+    except Exception as e:
+        session.rollback()
+        return e
     finally:
         session.close()
 
-def topology_paths():
-    return build_heartbeat_paths()
 
+def get_links_by_ip(ip):
+    session = SessionLocal()
+    try:
+        links = session.query(NetworkLink).options(
+            selectinload(NetworkLink.source_device),
+            selectinload(NetworkLink.destination_device)
+        ).filter(
+            (NetworkLink.source_ip == ip) | (NetworkLink.destination_ip == ip)
+        ).all()
+        return [
+            {
+                "id": link.id,
+                "source_ip": link.source_ip,
+                "destination_ip": link.destination_ip,
+                "status": link.status,
+                "remark": link.remark,
+                "source_device_name": link.source_device.device_name if link.source_device else "",
+                "destination_device_name": link.destination_device.device_name if link.destination_device else ""
+            }
+            for link in links
+        ]
+    finally:
+        session.close()
+
+
+# --- Cache helpers ---
 
 def cache_topology(key, data):
-    from db.models import TopologyCache
-    from datetime import datetime
     session = SessionLocal()
     try:
         existing = session.query(TopologyCache).filter(TopologyCache.key == key).first()
@@ -925,9 +807,8 @@ def cache_topology(key, data):
     finally:
         session.close()
 
+
 def get_cached_topology(key, ttl=10):
-    from db.models import TopologyCache
-    from datetime import datetime, timezone
     session = SessionLocal()
     try:
         existing = session.query(TopologyCache).filter(TopologyCache.key == key).first()
@@ -939,8 +820,8 @@ def get_cached_topology(key, ttl=10):
     finally:
         session.close()
 
+
 def invalidate_cache_for(key_prefix):
-    from db.models import TopologyCache
     session = SessionLocal()
     try:
         session.query(TopologyCache).filter(TopologyCache.key.like(f"{key_prefix}%")).delete()
@@ -949,3 +830,144 @@ def invalidate_cache_for(key_prefix):
     finally:
         session.close()
 
+def category_list():
+    session = SessionLocal()
+    try:
+        return [c.name.lower() for c in session.query(Category).all()]
+    finally:
+        session.close()
+    
+def category_add(cat):
+    session = SessionLocal()
+    try:
+        if not cat or not cat.strip():
+            return False, "Category name cannot be empty"
+
+        category = Category(name=cat.strip())
+        session.add(category)
+        session.commit()
+
+        return True, "Category added successfully"
+
+    except IntegrityError:
+        session.rollback()
+        return False, "Category already exists"
+
+    except Exception as e:
+        session.rollback()
+        return False, str(e)
+
+    finally:
+        session.close()
+
+
+def get_dashboard_state(user_id=None):
+    session = SessionLocal()
+    try:
+        state = session.query(DashboardState).first()
+        if not state:
+            return {"zoom": 1.0, "pan_x": 0.0, "pan_y": 0.0, "collapsed": [], "node_positions": {}, "layout_locked": False}
+        return {
+            "zoom": state.zoom,
+            "pan_x": state.pan_x,
+            "pan_y": state.pan_y,
+            "collapsed": json.loads(state.collapsed),
+            "node_positions": json.loads(state.node_positions),
+            "layout_locked": state.layout_locked,
+        }
+    finally:
+        session.close()
+
+
+def save_dashboard_state(zoom=1.0, pan_x=0.0, pan_y=0.0, collapsed=None, node_positions=None, layout_locked=False, user_id=None):
+    session = SessionLocal()
+    try:
+        state = session.query(DashboardState).first()
+        collapsed_json = json.dumps(collapsed or [])
+        positions_json = json.dumps(node_positions or {})
+        if state:
+            state.zoom = zoom
+            state.pan_x = pan_x
+            state.pan_y = pan_y
+            state.collapsed = collapsed_json
+            state.node_positions = positions_json
+            state.layout_locked = layout_locked
+        else:
+            state = DashboardState(
+                zoom=zoom,
+                pan_x=pan_x,
+                pan_y=pan_y,
+                collapsed=collapsed_json,
+                node_positions=positions_json,
+                layout_locked=layout_locked,
+            )
+            session.add(state)
+        session.commit()
+        return True
+    except Exception as e:
+        session.rollback()
+        return e
+    finally:
+        session.close()
+
+
+def create_user(username, password, must_change_password=False):
+    session = SessionLocal()
+    try:
+        if session.query(User).filter_by(user=username).first():
+            return False, "Username already exists"
+        user = User(
+            user=username,
+            passwd=generate_password_hash(password),
+            must_change_password=must_change_password
+        )
+        session.add(user)
+        session.commit()
+        return True, "User created successfully"
+    except Exception as e:
+        session.rollback()
+        return False, str(e)
+    finally:
+        session.close()
+
+
+def get_all_users():
+    session = SessionLocal()
+    try:
+        users = session.query(User).all()
+        return [{"id": u.id, "user": u.user, "must_change_password": u.must_change_password} for u in users]
+    finally:
+        session.close()
+
+
+def delete_user(user_id):
+    session = SessionLocal()
+    try:
+        user = session.get(User, user_id)
+        if not user:
+            return False, "User not found"
+        session.delete(user)
+        session.commit()
+        return True, "User deleted"
+    except Exception as e:
+        session.rollback()
+        return False, str(e)
+    finally:
+        session.close()
+
+
+def reset_user_password(user_id, new_password):
+    session = SessionLocal()
+    try:
+        user = session.get(User, user_id)
+        if not user:
+            return False, "User not found"
+        user.passwd = generate_password_hash(new_password)
+        user.must_change_password = True
+        session.commit()
+        return True, "Password reset"
+    except Exception as e:
+        session.rollback()
+        return False, str(e)
+    finally:
+        session.close()

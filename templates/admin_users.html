@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}User Management - NetDash{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 style="font-weight:700;color:#0f172a;margin:0;">User Management</h4>
+</div>
+
+<div class="row g-4">
+    <!-- Add User Card -->
+    <div class="col-md-5">
+        <div class="card" style="border:1px solid #e2e8f0;">
+            <h6 style="font-weight:700;color:#0f172a;margin-bottom:16px;">
+                <i class="fas fa-user-plus me-2 text-primary"></i>Add New User
+            </h6>
+            <form method="POST">
+                <input type="hidden" name="action" value="add">
+                <div class="mb-3">
+                    <label style="font-size:13px;font-weight:600;color:#64748b;">Username</label>
+                    <input type="text" name="username" class="form-control" placeholder="Enter username" required
+                           style="height:44px;border-radius:10px;">
+                </div>
+                <div class="mb-3">
+                    <label style="font-size:13px;font-weight:600;color:#64748b;">Password</label>
+                    <input type="password" name="password" class="form-control" placeholder="Enter password" required
+                           style="height:44px;border-radius:10px;">
+                </div>
+                <div class="mb-3">
+                    <label style="font-size:13px;font-weight:600;color:#64748b;">
+                        <input type="checkbox" name="must_change_password" checked> Force password change on first login
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-primary" style="height:44px;border-radius:10px;font-weight:600;width:100%;">
+                    <i class="fas fa-plus me-1"></i> Create User
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- User List -->
+    <div class="col-md-7">
+        <div class="card" style="border:1px solid #e2e8f0;">
+            <h6 style="font-weight:700;color:#0f172a;margin-bottom:16px;">
+                <i class="fas fa-users me-2 text-primary"></i>Existing Users
+            </h6>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle" style="margin-bottom:0;">
+                    <thead>
+                        <tr>
+                            <th style="border-top:none;color:#64748b;font-weight:600;font-size:13px;">ID</th>
+                            <th style="border-top:none;color:#64748b;font-weight:600;font-size:13px;">Username</th>
+                            <th style="border-top:none;color:#64748b;font-weight:600;font-size:13px;">Must Change PW</th>
+                            <th style="border-top:none;color:#64748b;font-weight:600;font-size:13px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for u in users %}
+                        <tr>
+                            <td style="font-weight:600;color:#475569;">{{ u.id }}</td>
+                            <td>
+                                <span style="font-weight:600;color:#0f172a;">{{ u.user }}</span>
+                                {% if u.user == 'admin' %}
+                                <span class="badge bg-primary ms-2" style="font-size:10px;">Admin</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if u.must_change_password %}
+                                <span class="badge bg-warning text-dark" style="font-size:10px;">Yes</span>
+                                {% else %}
+                                <span class="badge bg-success" style="font-size:10px;">No</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="d-flex gap-2">
+                                    <!-- Reset Password -->
+                                    <form method="POST" class="d-inline" onsubmit="return confirm('Reset password for {{ u.user }}?')">
+                                        <input type="hidden" name="action" value="reset_password">
+                                        <input type="hidden" name="user_id" value="{{ u.id }}">
+                                        <input type="text" name="new_password" placeholder="New password"
+                                               required minlength="4"
+                                               style="height:32px;font-size:12px;border-radius:8px;width:140px;display:inline-block;">
+                                        <button type="submit" class="btn btn-sm btn-outline-warning py-0 px-2" title="Reset password"
+                                                style="font-size:11px;border-radius:8px;height:32px;">
+                                            <i class="fas fa-key"></i>
+                                        </button>
+                                    </form>
+                                    <!-- Delete -->
+                                    {% if u.user != 'admin' %}
+                                    <form method="POST" class="d-inline" onsubmit="return confirm('Delete user {{ u.user }}?')">
+                                        <input type="hidden" name="action" value="delete">
+                                        <input type="hidden" name="user_id" value="{{ u.id }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2" title="Delete user"
+                                                style="font-size:11px;border-radius:8px;height:32px;">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </form>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if not users %}
+            <p class="text-muted text-center py-4" style="font-size:13px;">No users found</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

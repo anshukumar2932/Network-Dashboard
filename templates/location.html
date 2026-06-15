@@ -1,107 +1,85 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{{ location.name }} - Network Monitor</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+{% extends "base.html" %}
+{% block title %}{{ location_name }} - Network Monitor{% endblock %}
+{% block extra_head %}
 <style>
-body { background: #f5f8fc; font-family: 'Segoe UI', sans-serif; }
-<<<<<<< HEAD
-.sidebar { width:240px; min-height:100vh; background:#0f172a; color:#fff; position:fixed; padding:24px 0; }
-.sidebar h5 { padding:0 20px; margin-bottom:24px; font-weight:700; }
-.sidebar a { display:block; padding:10px 20px; color:#94a3b8; text-decoration:none; transition:.2s; }
-.sidebar a:hover, .sidebar a.active { color:#fff; background:#1e293b; }
-.main { margin-left:240px; padding:32px; }
-=======
-.sidebar { width:240px; min-height:100vh; background:#0f172a; color:#fff; position:fixed; top:0; left:0; padding:0; transition:transform 0.3s ease; z-index:1000; display:flex; flex-direction:column; }
-.sidebar-header { display:flex; align-items:center; justify-content:space-between; padding:24px 20px 0 20px; margin-bottom:24px; }
-.sidebar-header h5 { margin:0; font-weight:700; white-space:nowrap; }
-.sidebar-toggle { background:none; border:none; color:#94a3b8; font-size:20px; cursor:pointer; padding:0; line-height:1; }
-.sidebar-toggle:hover { color:#fff; }
-.sidebar nav { flex:1; }
-.sidebar a { display:block; padding:10px 20px; color:#94a3b8; text-decoration:none; transition:.2s; }
-.sidebar a:hover, .sidebar a.active { color:#fff; background:#1e293b; }
-.sidebar-collapsed .sidebar { transform:translateX(-240px); }
-.main { margin-left:240px; padding:32px; transition:margin-left 0.3s ease; }
-.sidebar-collapsed .main { margin-left:0; }
-.sidebar-floater { display:none; position:fixed; top:12px; left:12px; z-index:999; background:#0f172a; color:#fff; border:none; border-radius:8px; width:36px; height:36px; font-size:18px; cursor:pointer; }
-.sidebar-collapsed .sidebar-floater { display:block; }
-.sidebar-floater:hover { background:#1e293b; }
->>>>>>> d4c67386191a3946d87505f2e721d3d20064fd23
-.card { background:#fff; border-radius:16px; border:1px solid #e2e8f0; padding:24px; margin-bottom:24px; }
 .kpi-card { background:#fff; border-radius:16px; padding:20px; border:1px solid #e2e8f0; text-align:center; }
 .kpi-card .number { font-size:32px; font-weight:700; color:#0f172a; }
 .kpi-card .label { color:#64748b; font-size:14px; }
 </style>
-</head>
-<body>
-<<<<<<< HEAD
-<div class="sidebar">
-    <h5>Network Monitor</h5>
-    <a href="/dashboard">Dashboard</a>
-    <a href="/locations" class="active">Locations</a>
-    <a href="/sites">Sites</a>
-    <a href="/devices">Devices</a>
-    <a href="/devices/upload">Upload Excel</a>
-    <a href="/details/view">Details</a>
-    <a href="/logout">Logout</a>
-</div>
-=======
-{% include 'sidebar.html' %}
-<button class="sidebar-floater" onclick="toggleSidebar()" aria-label="Show sidebar">&#9776;</button>
->>>>>>> d4c67386191a3946d87505f2e721d3d20064fd23
-<div class="main">
-    <a href="/locations" class="btn btn-outline-secondary btn-sm mb-3">&larr; Back to Locations</a>
-    <h2 class="mb-4">{{ location.name }}</h2>
+{% endblock %}
+{% block content %}
+<a href="/dashboard" class="btn btn-outline-secondary btn-sm mb-3">&larr; Back to Dashboard</a>
+<h2 class="mb-4">{{ location_name }}</h2>
 
-    <div class="row g-3 mb-4">
-        <div class="col-md-4">
-            <div class="kpi-card">
-                <div class="number">{{ total_devices }}</div>
-                <div class="label">Total Devices</div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="kpi-card">
-                <div class="number text-success">{{ total_devices - down_devices }}</div>
-                <div class="label">Devices Up</div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="kpi-card">
-                <div class="number {% if down_devices > 0 %}text-danger{% endif %}">{{ down_devices }}</div>
-                <div class="label">Devices Down</div>
-            </div>
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="kpi-card">
+            <div class="number">{{ total_devices }}</div>
+            <div class="label">Total Devices</div>
         </div>
     </div>
-
-    <div class="card">
-        <h5 class="mb-3">Sites ({{ sites|length }})</h5>
-        <table class="table table-hover mb-0">
-            <thead><tr><th>Site</th><th>Status</th><th>Devices</th><th>Down</th></tr></thead>
-            <tbody>
-                {% for site in sites %}
-                <tr>
-                    <td><a href="/site/{{ site.id }}">{{ site.name }}</a></td>
-                    <td>
-                        {% if site.status == 'GREEN' %}
-                        <span class="badge bg-success">GREEN</span>
-                        {% elif site.status == 'YELLOW' %}
-                        <span class="badge bg-warning text-dark">YELLOW</span>
-                        {% else %}
-                        <span class="badge bg-danger">RED</span>
-                        {% endif %}
-                    </td>
-                    <td>{{ site.device_count }}</td>
-                    <td class="{% if site.down_count > 0 %}text-danger{% endif %}">{{ site.down_count }}</td>
-                </tr>
-                {% else %}
-                <tr><td colspan="4" class="text-muted">No sites in this location.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <div class="col-md-4">
+        <div class="kpi-card">
+            <div class="number text-success">{{ total_devices - down_devices }}</div>
+            <div class="label">Devices Up</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="kpi-card">
+            <div class="number {% if down_devices > 0 %}text-danger{% endif %}">{{ down_devices }}</div>
+            <div class="label">Devices Down</div>
+        </div>
     </div>
 </div>
-</body>
-</html>
+
+<div class="card">
+    <h5 class="mb-3">Devices ({{ devices|length }})</h5>
+    <table class="table table-hover mb-0">
+        <thead><tr><th>IP</th><th>Name</th><th>Model</th><th>Category</th><th>Status</th></tr></thead>
+        <tbody>
+            {% for d in devices %}
+            <tr>
+                <td><a href="/device/{{ d.ip }}">{{ d.ip }}</a></td>
+                <td>{{ d.device_name }}</td>
+                <td>{{ d.model }}</td>
+                <td>{{ d.category }}</td>
+                <td>
+                    {% if d.status %}
+                    <span class="badge bg-success">UP</span>
+                    {% else %}
+                    <span class="badge bg-danger">DOWN</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="text-muted">No devices in this location.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if links %}
+<div class="card">
+    <h5 class="mb-3">Links ({{ links|length }})</h5>
+    <table class="table table-hover mb-0">
+        <thead><tr><th>Source</th><th>Destination</th><th>Remark</th><th>Status</th></tr></thead>
+        <tbody>
+            {% for link in links %}
+            <tr>
+                <td><a href="/device/{{ link.source_ip }}">{{ link.source_device_name or link.source_ip }}</a></td>
+                <td><a href="/device/{{ link.destination_ip }}">{{ link.destination_device_name or link.destination_ip }}</a></td>
+                <td>{{ link.remark or '-' }}</td>
+                <td>
+                    {% if link.status %}
+                    <span class="badge bg-success">UP</span>
+                    {% else %}
+                    <span class="badge bg-danger">DOWN</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}
