@@ -16,6 +16,11 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
 
 .main { display:flex; flex-direction:column; padding:12px 24px; height:100vh; gap:12px; overflow:hidden; background:#f0f4f9; }
 
+/* RBAC: hide admin-only buttons for viewers */
+.btn.admin-only-btn { display: none; }
+body.is-admin .btn.admin-only-btn { display: inline-flex; }
+.btn.active-problems { background: rgba(59,130,246,.12); border-color: rgba(59,130,246,.4); color: #3b82f6; }
+
 @keyframes pulse        { 0%,100%{opacity:1} 50%{opacity:.4} }
 @keyframes slideInRight { from{opacity:0;transform:translateX(30px)} to{opacity:1;transform:translateX(0)} }
 @keyframes glowBadge    { 0%,100%{box-shadow:0 0 4px rgba(239,68,68,.3)} 50%{box-shadow:0 0 16px rgba(239,68,68,.7)} }
@@ -317,8 +322,10 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
                     <button id="fullscreenBtn"  class="btn btn-sm btn-outline-secondary py-0 px-3" style="font-size:12px;border-radius:40px;"><i class="fas fa-expand"></i> Fullscreen</button>
                     <button id="expandAllBtn"   class="btn btn-sm btn-outline-success  py-0 px-3" style="font-size:12px;border-radius:40px;"><i class="fas fa-plus-square"></i> Expand All</button>
                     <button id="collapseAllBtn" class="btn btn-sm btn-outline-warning  py-0 px-3" style="font-size:12px;border-radius:40px;"><i class="fas fa-minus-square"></i> Collapse All</button>
-                    <button id="resetLayoutBtn" class="btn btn-sm btn-outline-danger   py-0 px-3" style="font-size:12px;border-radius:40px;" title="Re-run ELK auto layout and save"><i class="fas fa-redo"></i> Auto Adjust</button>
-                    <button id="lockLayoutBtn" class="btn btn-sm btn-outline-secondary py-0 px-3" style="font-size:12px;border-radius:40px;" title="Lock/unlock node positions"><i class="fas fa-lock"></i> Lock</button>
+                    <button id="resetLayoutBtn" class="btn btn-sm btn-outline-danger   py-0 px-3 admin-only-btn" style="font-size:12px;border-radius:40px;" title="Re-run ELK auto layout and save"><i class="fas fa-redo"></i> Auto Adjust</button>
+                    <button id="lockLayoutBtn" class="btn btn-sm btn-outline-secondary py-0 px-3 admin-only-btn" style="font-size:12px;border-radius:40px;" title="Lock/unlock node positions"><i class="fas fa-lock"></i> Lock</button>
+                    <!-- Smart collapse controls -->
+                    
                 </div>
             </div>
 
@@ -330,24 +337,15 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
                 <div class="legend-box collapsed" id="legendBox">
                     <div class="leg-title" id="legendToggle"><i class="fas fa-layer-group"></i>Legend<i class="fas fa-chevron-right ms-auto" id="legendIcon"></i></div>
                     <div id="legendContent">
-                        <div class="legend-row"><span class="leg-dot" style="background:#22c55e;"></span>Online</div>
-                        <div class="legend-row"><span class="leg-dot" style="background:#f59e0b;"></span>Partial / Warning</div>
-                        <div class="legend-row"><span class="leg-dot" style="background:#ef4444;"></span>Offline / Down</div>
+                        <div class="legend-row"><span class="leg-dot" style="background:#22c55e;"></span>Device Up</div>
+                        <div class="legend-row"><span class="leg-dot" style="background:#f59e0b;"></span>Warning</div>
+                        <div class="legend-row"><span class="leg-dot" style="background:#ef4444;"></span>Device Down</div>
                         <div class="leg-sep"></div>
-                        <div class="legend-row">
-                            <span class="leg-line" style="background:#22c55e;"></span>Link Up
-                        </div>
-                        <div class="legend-row">
-                            <span class="leg-line" style="background:repeating-linear-gradient(to right,#ef4444 0,#ef4444 5px,transparent 5px,transparent 9px);height:2.5px;"></span>Link Down
-                        </div>
+                        <div class="legend-row"><span class="leg-line" style="background:#22c55e;"></span>Link Up</div>
+                        <div class="legend-row"><span class="leg-line" style="background:repeating-linear-gradient(to right,#ef4444 0,#ef4444 5px,transparent 5px,transparent 9px);height:2.5px;"></span>Link Down</div>
                         <div class="leg-sep"></div>
-                        <div class="legend-row" style="color:#64748b;font-size:11px;">
-                            <span style="display:inline-block;width:13px;height:13px;border-radius:50%;border:2px dashed #f59e0b;flex-shrink:0;"></span>
-                            Collapsed (has children)
-                        </div>
-                        <div class="legend-row" style="color:#64748b;font-size:11px;"><i class="fas fa-mouse fa-fw" style="color:#3b82f6;"></i>Double-click → expand/collapse</div>
-                        <div class="legend-row" style="color:#64748b;font-size:11px;"><i class="fas fa-mouse-pointer fa-fw" style="color:#8b5cf6;"></i>Right-click → open / redirect</div>
-                        <div class="legend-row" style="color:#64748b;font-size:11px;"><i class="fas fa-arrows-alt fa-fw" style="color:#3b82f6;"></i>Drag nodes to rearrange</div>
+                        <div class="legend-row" style="color:#64748b;font-size:11px;"><span style="display:inline-block;width:13px;height:13px;border-radius:50%;border:2px dashed #f59e0b;flex-shrink:0;"></span>Collapsed Branch</div>
+                        <div class="legend-row" style="color:#64748b;font-size:11px;"><i class="fas fa-link fa-fw" style="color:#8b5cf6;"></i>Shared Node</div>
                     </div>
                 </div>
             </div>
@@ -386,20 +384,15 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
 <div class="ctx-menu" id="ctxMenu">
     <div class="ctx-ip-header" id="ctxIpHeader">—</div>
     <div class="ctx-menu-sep"></div>
-    <div class="ctx-menu-item" id="ctxOpenHTTP"> <i class="fas fa-globe"></i>          Open HTTP (port 80)</div>
-    <div class="ctx-menu-item" id="ctxOpenHTTPS"><i class="fas fa-lock"></i>           Open HTTPS (port 443)</div>
-    <div class="ctx-menu-item" id="ctxPing">     <i class="fas fa-satellite-dish"></i> Ping device</div>
-
+    <div class="ctx-menu-item ctx-expand"   id="ctxExpand">       <i class="fas fa-plus-circle"></i>  Expand</div>
+    <div class="ctx-menu-item ctx-collapse" id="ctxCollapseNode"> <i class="fas fa-minus-circle"></i> Collapse</div>
     <div class="ctx-menu-sep"></div>
-    <div class="ctx-menu-item ctx-expand"   id="ctxExpand">         <i class="fas fa-plus-circle"></i>  Expand Node</div>
-    <div class="ctx-menu-item ctx-collapse" id="ctxCollapseNode">   <i class="fas fa-minus-circle"></i> Collapse Node</div>
-    <div class="ctx-menu-item ctx-collapse" id="ctxCollapseBranch"> <i class="fas fa-sitemap"></i>      Collapse Branch</div>
-    <div class="ctx-menu-item ctx-hide"     id="ctxHideNode">       <i class="fas fa-eye-slash"></i>    Hide Node</div>
-    <div class="ctx-menu-item ctx-focus"    id="ctxFocusNode">      <i class="fas fa-crosshairs"></i>   Focus Node</div>
+    <div class="ctx-menu-item" id="ctxOpenHTTP"> <i class="fas fa-globe"></i>  Open HTTP (80)</div>
+    <div class="ctx-menu-item" id="ctxOpenHTTPS"><i class="fas fa-lock"></i>   Open HTTPS (443)</div>
     <div class="ctx-menu-sep"></div>
-    <div class="ctx-menu-item ctx-detail"   id="ctxDetails"> <i class="fas fa-info-circle"></i>  View full details</div>
+    <div class="ctx-menu-item" id="ctxPing"><i class="fas fa-satellite-dish"></i> Ping Device</div>
     <div class="ctx-menu-sep"></div>
-    <div class="ctx-menu-item" id="ctxDevicePage"><i class="fas fa-external-link-alt"></i> Open device page</div>
+    <div class="ctx-menu-item ctx-detail" id="ctxDetails"><i class="fas fa-info-circle"></i> View Details</div>
 </div>
 
 <!-- Link / Node detail modal -->
@@ -416,6 +409,11 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
 <script>
 (function () {
     'use strict';
+
+    /* RBAC: set body class for admin-only UI */
+    if (window.IS_ADMIN) {
+        document.body.classList.add('is-admin');
+    }
 
     /* Register ELK layout engine with Cytoscape - handle different export names */
     try {
@@ -517,7 +515,7 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
             'label'        : function(ele) {
                 const lbl = ele.data('label') || ele.data('hostname') || ele.data('id') || '';
                 const hiddenCount = ele.data('hiddenCount') || 0;
-                return hiddenCount > 0 ? lbl + '\n' + hiddenCount + ' devices' : lbl;
+                return hiddenCount > 0 ? lbl + '\n▼ ' + hiddenCount + ' hidden' : lbl;
             },
             'font-size'    : '10px',
             'font-weight'  : '600',
@@ -527,12 +525,6 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
             'text-margin-y': '5px',
             'text-wrap'    : 'wrap',
             'text-max-width': '110px'
-        }},
-        /* interconnected child: faded instead of hidden */
-        { selector: 'node.collapsed-child', style: {
-            'opacity'      : 0.3,
-            'border-color' : '#94a3b8',
-            'border-style' : 'dotted'
         }},
         /* hidden elements */
         { selector: 'node.hidden-child', style: { 'display': 'none' } },
@@ -915,7 +907,6 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
             const child = cy.nodes(`[id="${cid}"]`);
             if (!child.length) continue;
             if (shouldHide(cid, nodeId)) child.addClass('hidden-child');
-            else child.addClass('collapsed-child');
             cy.edges(`[source="${nodeId}"][target="${cid}"]`).addClass('hidden-edge');
             cy.edges(`[source="${cid}"][target="${nodeId}"]`).addClass('hidden-edge');
         }
@@ -1013,7 +1004,7 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
 
     function scheduleSave() {
         /* debounce: wait 1.2 s of inactivity before hitting the server */
-        if (suppressSave) return;
+        if (suppressSave || !window.IS_ADMIN) return;
         clearTimeout(saveTimer);
         saveTimer = setTimeout(persistState, 1200);
     }
@@ -1095,6 +1086,11 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
         buildHierarchyMaps();
         calculateTopologyStatus();
         computeDepthMap();
+
+        /* RBAC: disable node dragging for viewers */
+        if (!window.IS_ADMIN) {
+            cy.autoungrabify(true);
+        }
 
         /* Apply saved collapse state OR auto-hide deep nodes */
         if (savedState && savedState.collapsed && savedState.collapsed.length) {
@@ -1338,13 +1334,15 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
 
     /* ── Site info panel ── */
     function updateSiteInfoPanel(d) {
+        const panel = document.getElementById('siteInfoPanel');
+        if (!panel) return;
         const isUp = d.status==='GREEN', isY = d.status==='YELLOW';
         const bc = isUp ? 'badge-soft-success' : (isY ? 'badge-soft-warning' : 'badge-soft-danger');
         const lb = isUp ? 'ONLINE' : (isY ? 'PARTIAL' : 'OFFLINE');
         const hint = d.hasChildren
             ? `<span style="font-size:10px;color:#3b82f6;margin-left:6px;"><i class="fas fa-sitemap"></i> ${d.childCount} children (${collapsedNodes.has(d.id)?'collapsed':'expanded'} · dbl-click)</span>`
             : '';
-        document.getElementById('siteInfoPanel').innerHTML =
+        panel.innerHTML =
             `<div style="display:flex;justify-content:space-between;align-items:center;">
                 <div>
                     <i class="fas fa-server me-1 text-primary"></i>
@@ -1404,10 +1402,8 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
             (d.hiddenCount > 0 ? '<br><span style="font-size:11px;color:#f59e0b;">' + d.hiddenCount + ' devices hidden</span>' : '');
 
         /* Dynamic menu visibility */
-        document.getElementById('ctxExpand').style.display         = isCollapsed ? 'flex' : 'none';
-        document.getElementById('ctxCollapseNode').style.display   = (!isCollapsed && hasChildren) ? 'flex' : 'none';
-        document.getElementById('ctxCollapseBranch').style.display = (!isCollapsed && hasChildren && d.childCount > 1) ? 'flex' : 'none';
-        document.getElementById('ctxHideNode').style.display       = isRoot ? 'none' : 'flex';
+        document.getElementById('ctxExpand').style.display       = isCollapsed ? 'flex' : 'none';
+        document.getElementById('ctxCollapseNode').style.display = (!isCollapsed && hasChildren) ? 'flex' : 'none';
 
         menu.style.display = 'block';
         const mw = menu.offsetWidth||205, mh = menu.offsetHeight||240;
@@ -1418,54 +1414,44 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
     document.addEventListener('click',       () => closeCtxMenu());
     document.addEventListener('contextmenu', e => { if(!e.target.closest('#cy')) closeCtxMenu(); });
 
-    document.getElementById('ctxOpenHTTP').addEventListener('click',  () => { if(!ctxNode)return; closeCtxMenu(); window.open('http://'+ctxNode.id(),'_blank'); });
-    document.getElementById('ctxOpenHTTPS').addEventListener('click', () => { if(!ctxNode)return; closeCtxMenu(); window.open('https://'+ctxNode.id(),'_blank'); });
+    document.getElementById('ctxOpenHTTP')?.addEventListener('click',  () => { if(!ctxNode)return; closeCtxMenu(); window.open('http://'+ctxNode.id(),'_blank','noopener,noreferrer'); });
+    document.getElementById('ctxOpenHTTPS')?.addEventListener('click', () => { if(!ctxNode)return; closeCtxMenu(); window.open('https://'+ctxNode.id(),'_blank','noopener,noreferrer'); });
 
-    document.getElementById('ctxPing').addEventListener('click', () => {
+    document.getElementById('ctxPing')?.addEventListener('click', () => {
         if(!ctxNode)return; const ip=ctxNode.id(); closeCtxMenu();
         fetch('/api/ping/'+ip).catch(()=>{});
         alert('Pinging '+ip+'…');
     });
-    document.getElementById('ctxExpand').addEventListener('click', () => {
+    document.getElementById('ctxExpand')?.addEventListener('click', () => {
         if(!ctxNode)return; expandNode(ctxNode.id()); closeCtxMenu();
         cy.animate({fit:{eles:cy.elements(':visible'),padding:40}},{duration:380});
         scheduleSave();
     });
-    document.getElementById('ctxCollapseNode').addEventListener('click', () => {
-        if(!ctxNode)return; collapseNodeOnly(ctxNode.id()); closeCtxMenu();
-        cy.animate({fit:{eles:cy.elements(':visible'),padding:40}},{duration:380});
-        scheduleSave();
-    });
-    document.getElementById('ctxCollapseBranch').addEventListener('click', () => {
+    document.getElementById('ctxCollapseNode')?.addEventListener('click', () => {
         if(!ctxNode)return; collapseNode(ctxNode.id()); closeCtxMenu();
         cy.animate({fit:{eles:cy.elements(':visible'),padding:40}},{duration:380});
         scheduleSave();
     });
-    document.getElementById('ctxHideNode').addEventListener('click', () => {
-        if(!ctxNode) return;
-        ctxNode.addClass('hidden-child');
-        ctxNode.connectedEdges().addClass('hidden-edge');
-        closeCtxMenu();
-        scheduleSave();
-    });
-    document.getElementById('ctxFocusNode').addEventListener('click', () => {
-        if(!ctxNode) return; closeCtxMenu();
-        cy.animate({ center: { eles: ctxNode }, zoom: 1.4 }, { duration: 400, easing: 'ease-out' });
-    });
-    document.getElementById('ctxDetails').addEventListener('click', () => {
+    document.getElementById('ctxDetails')?.addEventListener('click', () => {
         if(!ctxNode)return; closeCtxMenu();
         const d=ctxNode.data();
+        const fields=[
+            ['Hostname',d.hostname||d.device_name],
+            ['IP',d.id||d.ip],
+            ['Status',d.status],
+            ['Category',d.category],
+            ['Location',d.location],
+            ['Children',d.hasChildren?(d.childCount||'?')+' total':'—'],
+            ['Up',d.upChildren?d.upChildren+'':'—'],
+            ['Down',d.downChildren?d.downChildren+'':'—'],
+        ];
         document.getElementById('linkModalTitle').innerHTML=`<i class="fas fa-server me-2 text-primary"></i>${d.hostname||d.device_name||d.id}`;
         document.getElementById('linkModalBody').innerHTML=
             `<table class="table table-sm table-striped">`+
-            Object.entries(d).filter(([,v])=>v!==undefined&&v!==null&&v!=='')
+            fields.filter(([,v])=>v&&v!=='—')
             .map(([k,v])=>`<tr><th style="width:35%;color:#64748b;font-weight:600;">${k}</th><td>${v}</td></tr>`).join('')+
             `</table>`;
         showModal();
-    });
-    document.getElementById('ctxDevicePage').addEventListener('click', () => {
-        if(!ctxNode)return; closeCtxMenu();
-        window.open('/device/' + ctxNode.id(), '_blank');
     });
 
     /* ── Modal ── */
@@ -1504,8 +1490,11 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
             found[0].addClass('hovered');
             setTimeout(()=>found[0].removeClass('hovered'),2200);
         } else {
-            document.getElementById('siteInfoPanel').innerHTML=`<i class="fas fa-search-minus text-muted"></i> No match for "<em>${term}</em>"`;
-            setTimeout(()=>{ document.getElementById('siteInfoPanel').innerHTML='<i class="fas fa-info-circle me-1"></i> Click any node to see details'; },2000);
+            const sp = document.getElementById('siteInfoPanel');
+            if (sp) {
+                sp.innerHTML=`<i class="fas fa-search-minus text-muted"></i> No match for "<em>${term}</em>"`;
+                setTimeout(()=>{ sp.innerHTML='<i class="fas fa-info-circle me-1"></i> Click any node to see details'; },2000);
+            }
         }
     });
 
@@ -1519,6 +1508,7 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
     document.getElementById('collapseAllBtn').addEventListener('click', collapseAll);
 
     document.getElementById('resetLayoutBtn').addEventListener('click', async () => {
+    if (!window.IS_ADMIN) return;
     if (layoutLocked) {
         alert('Layout is locked. Unlock layout before running Auto Adjust.');
         return;
@@ -1636,13 +1626,14 @@ html, body { height:100%; overflow:hidden; background:#f0f4f9; font-family:'Inte
 
     /* Lock Layout toggle */
     document.getElementById('lockLayoutBtn').addEventListener('click', () => {
-        if (!cy) return;
+        if (!window.IS_ADMIN || !cy) return;
         layoutLocked = !layoutLocked;
         applyLockState();
         persistState();
     });
 
     function applyLockState() {
+        if (!window.IS_ADMIN) return;
         const btn = document.getElementById('lockLayoutBtn');
         if (layoutLocked) {
             cy.nodes().ungrabify();

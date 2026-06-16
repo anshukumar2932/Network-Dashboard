@@ -1,0 +1,399 @@
+/* ═══════════════════════════════════════════════════════════════
+   responsive.css — Shared responsive rules for Network Dashboard
+   Breakpoints: 1400px | 1200px | 992px | 768px | 576px
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════
+   PHASE 1 — Foundation: Sidebar & Main Layout
+   ═══════════════════════════════════════════════ */
+
+/* ── Sidebar mobile overlay ────────────────────── */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.45);
+    z-index: 1055;
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+}
+
+/* ── Mobile hamburger toggle ───────────────────── */
+.sidebar-toggle-mobile {
+    display: none;
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 1070;
+    background: #0f172a;
+    color: #e2e8f0;
+    border: 1px solid rgba(255,255,255,.15);
+    border-radius: 12px;
+    width: 44px;
+    height: 44px;
+    font-size: 18px;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,.2);
+    transition: background 0.15s;
+}
+.sidebar-toggle-mobile:hover { background: #1e293b; }
+
+/* ── Tablet (≤992px): sidebar off-canvas ──────── */
+@media (max-width: 992px) {
+    .sidebar {
+        transform: translateX(-100%);
+        transition: transform 0.3s cubic-bezier(.4,0,.2,1);
+    }
+    .sidebar.mobile-open {
+        transform: translateX(0);
+    }
+    .sidebar.mobile-open ~ .sidebar-overlay {
+        display: block;
+    }
+    .sidebar-toggle-mobile {
+        display: flex;
+    }
+    .sidebar-toggle { display: none; }
+
+    .main {
+        margin-left: 0 !important;
+        padding: 16px;
+        padding-top: 60px;
+    }
+    body.sidebar-collapsed .main {
+        margin-left: 0 !important;
+    }
+}
+
+/* ── Mobile (≤576px): reduce padding ──────────── */
+@media (max-width: 576px) {
+    .main {
+        padding: 12px;
+        padding-top: 56px;
+    }
+    .card {
+        padding: 16px;
+        margin-bottom: 16px;
+        border-radius: 12px;
+    }
+}
+
+
+/* ═══════════════════════════════════════════════
+   PHASE 2 — Dashboard (radio3.html)
+   ═══════════════════════════════════════════════ */
+
+/* ── KPI Cards ────────────────────────────────── */
+@media (max-width: 992px) {
+    .kpi-row .col-md-3 {
+        flex: 0 0 50%;
+        max-width: 50%;
+    }
+}
+@media (max-width: 576px) {
+    .kpi-row .col-md-3,
+    .kpi-row [class*="col-"] {
+        flex: 0 0 100%;
+        max-width: 100%;
+    }
+    .kpi-card .number { font-size: 26px; }
+    .kpi-card .label  { font-size: 10px; }
+}
+
+/* ── Health banner ────────────────────────────── */
+@media (max-width: 768px) {
+    .health-banner {
+        padding: 10px 14px;
+        border-radius: 14px;
+    }
+    .health-banner h4 { font-size: 13px; }
+    .health-banner .sub-text,
+    .health-banner .poll-time { font-size: 11px; }
+}
+
+/* ── Search box ───────────────────────────────── */
+@media (max-width: 768px) {
+    #searchInput {
+        width: 100% !important;
+    }
+    .search-wrap {
+        width: 100% !important;
+    }
+}
+
+/* ── Toolbar wrapping ─────────────────────────── */
+@media (max-width: 992px) {
+    .toolbar-wrap {
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+    .toolbar-wrap .btn {
+        font-size: 11px;
+        padding: 4px 8px;
+    }
+    .toolbar-wrap .vr { display: none; }
+}
+@media (max-width: 576px) {
+    .toolbar-wrap .btn {
+        font-size: 10px;
+        padding: 3px 6px;
+    }
+}
+
+/* ── Bottom panels ────────────────────────────── */
+@media (max-width: 992px) {
+    .bottom-panels .col-lg-5,
+    .bottom-panels .col-lg-7 {
+        flex: 0 0 100%;
+        max-width: 100%;
+    }
+}
+
+/* ── Topology container ───────────────────────── */
+.topology-card {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.topology-card .card-body {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0;
+}
+
+
+/* ═══════════════════════════════════════════════
+   PHASE 3 — Fullscreen Topology
+   ═══════════════════════════════════════════════ */
+
+/* ── Toolbar → bottom bar on mobile ───────────── */
+@media (max-width: 768px) {
+    .fs-toolbar {
+        top: auto;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        justify-content: center;
+        padding: 8px;
+        background: rgba(15,23,42,.95);
+        border-radius: 16px 16px 0 0;
+        gap: 4px;
+        flex-wrap: wrap;
+    }
+    .fs-toolbar .fs-btn {
+        font-size: 11px;
+        padding: 5px 10px;
+    }
+    .fs-toolbar .fs-btn-group {
+        display: none;
+    }
+    .fs-toolbar .fs-btn.exit {
+        position: fixed;
+        top: 8px;
+        right: 8px;
+        z-index: 1000;
+    }
+}
+
+/* ── Search bar ───────────────────────────────── */
+@media (max-width: 768px) {
+    .fs-search {
+        top: 8px;
+        left: 56px;
+        right: 56px;
+        width: auto;
+    }
+    .fs-search input {
+        width: 100% !important;
+    }
+    .fs-search input:focus {
+        width: 100% !important;
+    }
+}
+@media (max-width: 576px) {
+    .fs-search {
+        left: 8px;
+        right: 56px;
+    }
+}
+
+/* ── KPI bar → vertical stack on mobile ───────── */
+@media (max-width: 576px) {
+    .kpi-row {
+        left: 8px;
+        right: 8px;
+        transform: none;
+        flex-direction: column;
+        gap: 6px;
+        align-items: stretch;
+    }
+    .kpi-card {
+        min-width: 0;
+        text-align: left;
+        padding: 6px 12px;
+        display: flex;
+        flex-direction: row;
+        gap: 8px;
+        align-items: center;
+        justify-content: space-between;
+    }
+}
+
+/* ── Alert panel → modal drawer on mobile ─────── */
+@media (max-width: 768px) {
+    .alert-panel {
+        top: auto;
+        bottom: 60px;
+        left: 0;
+        right: 0;
+        max-width: 100%;
+        max-height: 50vh;
+        border-radius: 16px 16px 0 0;
+        transform: translateY(100%);
+        transition: transform 0.3s ease;
+    }
+    .alert-panel.show {
+        transform: translateY(0);
+    }
+}
+
+/* ── Legend ────────────────────────────────────── */
+@media (max-width: 576px) {
+    .legend-box {
+        position: fixed;
+        bottom: 70px;
+        left: 8px;
+        right: 8px;
+        min-width: 0;
+        max-height: 40vh;
+        overflow-y: auto;
+    }
+}
+
+/* ── Role badge & ping flash ──────────────────── */
+@media (max-width: 576px) {
+    .role-badge {
+        font-size: 10px;
+        padding: 3px 10px;
+    }
+    #pingFlash {
+        font-size: 12px;
+        padding: 10px 14px;
+        width: calc(100% - 32px);
+        text-align: center;
+    }
+}
+
+
+/* ═══════════════════════════════════════════════
+   PHASE 4 — Forms & Tables
+   ═══════════════════════════════════════════════ */
+
+/* ── Forms ─────────────────────────────────────── */
+@media (max-width: 768px) {
+    .form-control,
+    .form-select {
+        width: 100% !important;
+        height: auto;
+        min-height: 38px;
+    }
+    .form-label {
+        margin-bottom: 4px;
+    }
+
+    /* Stack form columns */
+    .form-row-responsive .col-md-1,
+    .form-row-responsive .col-md-2,
+    .form-row-responsive .col-md-3,
+    .form-row-responsive .col-md-4,
+    .form-row-responsive .col-md-5,
+    .form-row-responsive .col-md-6,
+    .form-row-responsive .col-md-7 {
+        flex: 0 0 100%;
+        max-width: 100%;
+    }
+
+    /* Form actions stack */
+    .form-actions-responsive {
+        flex-direction: column;
+        gap: 8px;
+    }
+    .form-actions-responsive .btn {
+        width: 100%;
+        min-height: 44px;
+    }
+}
+
+/* ── Tables ────────────────────────────────────── */
+@media (max-width: 768px) {
+    .table {
+        font-size: 12px;
+    }
+    .table td,
+    .table th {
+        padding: 6px 8px;
+        white-space: nowrap;
+    }
+    .table-responsive {
+        border-radius: 10px;
+        border: 1px solid #e2e8f0;
+    }
+}
+
+/* ── Details view: fix sidebar conflict ────────── */
+@media (max-width: 992px) {
+    .details-view-sidebar {
+        transform: translateX(-100%);
+        transition: transform 0.3s cubic-bezier(.4,0,.2,1);
+    }
+    .details-view-sidebar.mobile-open {
+        transform: translateX(0);
+    }
+    .details-view-main {
+        margin-left: 0 !important;
+        padding: 16px;
+        padding-top: 60px;
+    }
+}
+
+
+/* ═══════════════════════════════════════════════
+   PHASE 6 — Accessibility
+   ═══════════════════════════════════════════════ */
+
+/* ── Touch targets (coarse pointer = mobile) ──── */
+@media (pointer: coarse) {
+    .btn,
+    .form-control,
+    .form-select,
+    .dropdown-item,
+    .sidebar-nav a,
+    .logout-link {
+        min-height: 44px;
+    }
+    .ac-item { padding: 12px 14px; }
+    .ctx-menu-item { padding: 12px 14px; }
+    .sidebar-toggle-mobile { width: 48px; height: 48px; }
+}
+
+/* ── High contrast ─────────────────────────────── */
+@media (prefers-contrast: high) {
+    .btn { border-width: 2px; }
+    .form-control { border-width: 2px; }
+    .kpi-card { border-width: 2px; }
+    .card { border-width: 2px; }
+}
+
+/* ── Reduced motion ────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

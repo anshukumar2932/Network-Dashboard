@@ -43,6 +43,7 @@
 {% block content %}
 <h2 class="mb-4 fw-bold">Devices</h2>
 
+{% if is_admin %}
 <div class="card">
     <h5 class="mb-3 fw-semibold">{{ "Edit Device" if edit else "Add Device" }}</h5>
     <form method="POST">
@@ -91,6 +92,7 @@
         </div>
     </form>
 </div>
+{% endif %}
 
 <div class="card">
     <div class="d-flex justify-content-between align-items-center mb-3">
@@ -113,10 +115,12 @@
                 <button type="submit" class="btn btn-sm btn-outline-primary">Search</button>
                 {% if search %}<a href="/devices" class="btn btn-sm btn-outline-secondary">Clear</a>{% endif %}
             </form>
+            {% if is_admin %}
             <a href="/devices/upload" class="btn btn-outline-dark btn-sm">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" class="me-1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 Upload Excel
             </a>
+            {% endif %}
         </div>
     </div>
     <div class="table-responsive">
@@ -152,9 +156,11 @@
                         </span>
                     </td>
                     <td>
+                        {% if is_admin %}
                         <a href="/devices?edit={{ d.ip }}&page={{ page }}&per_page={{ per_page }}&search={{ search }}&sort_by={{ sort_by }}&sort_order={{ sort_order }}" class="btn btn-sm btn-outline-primary me-1">Edit</a>
                         <a href="/devices/delete/{{ d.ip }}" class="btn btn-sm btn-outline-danger"
                            onclick="return confirm('Delete {{ d.device_name }}?')">Delete</a>
+                        {% endif %}
                     </td>
                 </tr>
                 {% else %}

@@ -34,6 +34,7 @@
 
 <div class="card">
     <h5 class="mb-3">Devices ({{ devices|length }})</h5>
+    <div class="table-responsive">
     <table class="table table-hover mb-0">
         <thead><tr><th>IP</th><th>Name</th><th>Model</th><th>Category</th><th>Status</th></tr></thead>
         <tbody>
@@ -56,11 +57,13 @@
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 
 {% if links %}
 <div class="card">
     <h5 class="mb-3">Links ({{ links|length }})</h5>
+    <div class="table-responsive">
     <table class="table table-hover mb-0">
         <thead><tr><th>Source</th><th>Destination</th><th>Remark</th><th>Status</th></tr></thead>
         <tbody>
@@ -80,6 +83,7 @@
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 {% endif %}
 {% endblock %}

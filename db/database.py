@@ -249,17 +249,10 @@ def get_details_paginated(page=1, per_page=20, sort_by="ip", sort_dir="asc", sea
         session.close()
 
 
-def derive_node_status(ip, links):
-    attached = [l for l in links if l.source_ip == ip or l.destination_ip == ip]
-    if not attached:
-        return "GREEN", True
-    up_count = sum(1 for l in attached if l.status)
-    if up_count == len(attached):
-        return "GREEN", True
-    elif up_count == 0:
+def derive_node_status(ip, links, device_up=None):
+    if device_up is False:
         return "RED", False
-    else:
-        return "YELLOW", False
+    return "GREEN", True
 
 
 def get_ip_topology():
@@ -304,7 +297,8 @@ def get_ip_topology():
             base_y = (loc_index // loc_cols) * 500
             for i, ip in enumerate(ips):
                 d = device_map.get(ip)
-                node_status, status_bool = derive_node_status(ip, links)
+                node_status, status_bool = derive_node_status(ip, links, device_up=d.status if d else None)
+                print(f"[DB] {ip} device_up={d.status if d else None} -> status={node_status}")
                 nodes.append({
                     "data": {
                         "id": ip,

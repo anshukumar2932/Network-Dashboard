@@ -6,6 +6,7 @@
 <meta name="csrf-token" content="{{ csrf_token }}">
 <title>Network Topology — Fullscreen</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+<link rel="stylesheet" href="/static/css/responsive.css">
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
 <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
@@ -28,6 +29,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:
 .fs-btn:hover{background:rgba(30,41,59,.95);border-color:rgba(255,255,255,.3);color:#fff;}
 .fs-btn.exit{border-color:rgba(239,68,68,.4);color:#fca5a5;}
 .fs-btn.exit:hover{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.6);color:#fff;}
+.fs-btn-group{background:rgba(15,23,42,.85);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.15);border-radius:30px;color:#e2e8f0;font-size:12px;font-weight:600;padding:5px 10px;display:flex;align-items:center;gap:5px;}
+.fs-btn.active-problems{background:rgba(59,130,246,.2);border-color:rgba(59,130,246,.5);color:#60a5fa;}
 .fs-btn.active-lock{border-color:rgba(239,68,68,.5);color:#fca5a5;background:rgba(239,68,68,.1);}
 
 .fs-search{position:fixed;top:12px;left:12px;z-index:999;display:flex;gap:6px;align-items:center;}
@@ -95,6 +98,14 @@ html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:
 .sync-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25);border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600;opacity:0;transition:opacity .4s;}
 .sync-badge.show{opacity:1;}
 
+.fs-btn.admin-only{display:none;}
+body.is-admin .fs-btn.admin-only{display:flex;}
+
+.role-badge{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:999;background:rgba(15,23,42,.85);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.15);border-radius:20px;padding:4px 14px;font-size:11px;font-weight:600;color:#94a3b8;display:flex;align-items:center;gap:6px;}
+.role-badge i{font-size:10px;}
+.role-badge.viewer{color:#94a3b8;}
+.role-badge.admin{color:#3b82f6;}
+
 #pingFlash{position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:99999;display:none;background:#16a34a;color:white;padding:14px 18px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.2);font-weight:600;}
 
 .kpi-row{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:999;display:flex;gap:10px;}
@@ -111,6 +122,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:
 </style>
 </head>
 <body>
+<script>
+    window.USER_ROLE = "{{ user_role }}";
+    window.IS_ADMIN = {{ 'true' if is_admin else 'false' }};
+</script>
 
 <div class="fs-search">
     <i class="fas fa-search"></i>
@@ -120,10 +135,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:
 <div class="fs-toolbar">
     <span class="sync-badge" id="syncBadge"><i class="fas fa-check-circle"></i> Saved</span>
     <button class="fs-btn" id="fitBtn"><i class="fas fa-expand-alt"></i> Fit</button>
-    <button class="fs-btn" id="expandAllBtn"><i class="fas fa-plus-square"></i> Expand</button>
-    <button class="fs-btn" id="collapseAllBtn"><i class="fas fa-minus-square"></i> Collapse</button>
-    <button class="fs-btn" id="resetLayoutBtn"><i class="fas fa-redo"></i> Auto Adjust</button>
-    <button class="fs-btn" id="lockLayoutBtn"><i class="fas fa-lock"></i> Lock</button>
+    <button class="fs-btn" id="expandAllBtn"><i class="fas fa-plus-square"></i> Expand All</button>
+    <button class="fs-btn" id="collapseAllBtn"><i class="fas fa-minus-square"></i> Collapse All</button>
+    <button class="fs-btn admin-only" id="resetLayoutBtn"><i class="fas fa-redo"></i> Auto Adjust</button>
+    <button class="fs-btn admin-only" id="lockLayoutBtn"><i class="fas fa-lock"></i> Lock Layout</button>
     <button class="fs-btn" id="pingBtn"><i class="fas fa-network-wired"></i> Ping All</button>
     <button class="fs-btn" id="refreshBtn"><i class="fas fa-sync-alt"></i> Refresh</button>
     <button class="fs-btn exit" id="exitBtn"><i class="fas fa-times"></i> Exit</button>
@@ -147,17 +162,15 @@ html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:
     <div class="legend-box collapsed" id="legendBox" style="pointer-events:auto;">
         <div class="leg-title" id="legendToggle"><i class="fas fa-layer-group"></i>Legend<i class="fas fa-chevron-right ms-auto" id="legendIcon"></i></div>
         <div id="legendContent">
-            <div class="legend-row"><span class="leg-dot" style="background:#22c55e;"></span>Online</div>
-            <div class="legend-row"><span class="leg-dot" style="background:#f59e0b;"></span>Partial / Warning</div>
-            <div class="legend-row"><span class="leg-dot" style="background:#ef4444;"></span>Offline / Down</div>
+            <div class="legend-row"><span class="leg-dot" style="background:#22c55e;"></span>Device Up</div>
+            <div class="legend-row"><span class="leg-dot" style="background:#f59e0b;"></span>Warning</div>
+            <div class="legend-row"><span class="leg-dot" style="background:#ef4444;"></span>Device Down</div>
             <div class="leg-sep"></div>
             <div class="legend-row"><span class="leg-line" style="background:#22c55e;"></span>Link Up</div>
             <div class="legend-row"><span class="leg-line" style="background:repeating-linear-gradient(to right,#ef4444 0,#ef4444 5px,transparent 5px,transparent 9px);height:2.5px;"></span>Link Down</div>
             <div class="leg-sep"></div>
-            <div class="legend-row" style="color:#94a3b8;font-size:11px;"><span style="display:inline-block;width:13px;height:13px;border-radius:50%;border:2px dashed #f59e0b;flex-shrink:0;"></span>Collapsed (has children)</div>
-            <div class="legend-row" style="color:#94a3b8;font-size:11px;"><i class="fas fa-mouse fa-fw" style="color:#3b82f6;"></i>Double-click → expand/collapse</div>
-            <div class="legend-row" style="color:#94a3b8;font-size:11px;"><i class="fas fa-mouse-pointer fa-fw" style="color:#8b5cf6;"></i>Right-click → options</div>
-            <div class="legend-row" style="color:#94a3b8;font-size:11px;"><i class="fas fa-arrows-alt fa-fw" style="color:#3b82f6;"></i>Drag nodes to rearrange</div>
+            <div class="legend-row" style="color:#94a3b8;font-size:11px;"><span style="display:inline-block;width:13px;height:13px;border-radius:50%;border:2px dashed #f59e0b;flex-shrink:0;"></span>Collapsed Branch</div>
+            <div class="legend-row" style="color:#94a3b8;font-size:11px;"><i class="fas fa-link fa-fw" style="color:#8b5cf6;"></i>Shared Node</div>
         </div>
     </div>
     <div id="cy-minimap" style="pointer-events:auto;"></div>
@@ -168,19 +181,15 @@ html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:
 <div class="ctx-menu" id="ctxMenu">
     <div class="ctx-ip-header" id="ctxIpHeader">—</div>
     <div class="ctx-menu-sep"></div>
-    <div class="ctx-menu-item" id="ctxOpenHTTP"><i class="fas fa-globe" style="color:#3b82f6;"></i>Open HTTP (port 80)</div>
-    <div class="ctx-menu-item" id="ctxOpenHTTPS"><i class="fas fa-lock" style="color:#3b82f6;"></i>Open HTTPS (port 443)</div>
-    <div class="ctx-menu-item" id="ctxPing"><i class="fas fa-satellite-dish" style="color:#3b82f6;"></i>Ping device</div>
+    <div class="ctx-menu-item ctx-expand"   id="ctxExpand">       <i class="fas fa-plus-circle"></i>  Expand</div>
+    <div class="ctx-menu-item ctx-collapse" id="ctxCollapseNode"> <i class="fas fa-minus-circle"></i> Collapse</div>
     <div class="ctx-menu-sep"></div>
-    <div class="ctx-menu-item ctx-expand" id="ctxExpand"><i class="fas fa-plus-circle"></i>Expand Node</div>
-    <div class="ctx-menu-item ctx-collapse" id="ctxCollapseNode"><i class="fas fa-minus-circle"></i>Collapse Node</div>
-    <div class="ctx-menu-item ctx-collapse" id="ctxCollapseBranch"><i class="fas fa-sitemap"></i>Collapse Branch</div>
-    <div class="ctx-menu-item ctx-hide" id="ctxHideNode"><i class="fas fa-eye-slash"></i>Hide Node</div>
-    <div class="ctx-menu-item ctx-focus" id="ctxFocusNode"><i class="fas fa-crosshairs"></i>Focus Node</div>
+    <div class="ctx-menu-item" id="ctxOpenHTTP"> <i class="fas fa-globe"></i>  Open HTTP (80)</div>
+    <div class="ctx-menu-item" id="ctxOpenHTTPS"><i class="fas fa-lock"></i>   Open HTTPS (443)</div>
     <div class="ctx-menu-sep"></div>
-    <div class="ctx-menu-item ctx-detail" id="ctxDetails"><i class="fas fa-info-circle"></i>View full details</div>
+    <div class="ctx-menu-item" id="ctxPing"><i class="fas fa-satellite-dish"></i> Ping Device</div>
     <div class="ctx-menu-sep"></div>
-    <div class="ctx-menu-item" id="ctxDevicePage"><i class="fas fa-external-link-alt" style="color:#3b82f6;"></i>Open device page</div>
+    <div class="ctx-menu-item ctx-detail" id="ctxDetails"><i class="fas fa-info-circle"></i> View Details</div>
 </div>
 
 <div class="modal-overlay" id="linkModalOverlay">
@@ -194,1076 +203,64 @@ html,body{width:100%;height:100%;overflow:hidden;background:#f8fafc;font-family:
 <div id="pingFlash"></div>
 
 <script>
-(function () {
-    'use strict';
-
-    /* Register ELK layout engine with Cytoscape - handle different export names */
-    try {
-        if (typeof CytoscapeELK !== 'undefined') {
-            cytoscape.use(CytoscapeELK);
-            console.log('[TOPOLOGY] ELK plugin registered');
-        } else if (typeof window.CytoscapeELK !== 'undefined') {
-            cytoscape.use(window.CytoscapeELK);
-            console.log('[TOPOLOGY] ELK plugin registered from window');
-        } else {
-            console.warn('[TOPOLOGY] ELK plugin not found - layout will use fallback');
-        }
-    } catch (e) {
-        console.error('[TOPOLOGY] Error registering ELK:', e);
+    if (window.IS_ADMIN) {
+        document.body.classList.add('is-admin');
     }
+</script>
+<script src="{{ url_for('static', filename='js/topology.js') }}"></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    window.initTopology({
+        mode: 'fullscreen',
 
-    let cy = null;
-    let ctxNode = null;
-    let saveTimer = null;
-    let layoutLocked = false;
-    let navInstance = null;
-    let suppressSave = false;
-    const collapsedNodes = new Set();
+        cyContainer: '#cy',
+        loadingEl: '#loading',
 
-    /* Performance caches — built once during initGraph */
-    let depthMap = null;
-    let childCountMap = null;
-    const childrenMap = new Map();
-    const parentMap = new Map();
+        pingFlashEl: '#pingFlash',
+        syncBadgeEl: '#syncBadge',
 
-    function getCsrfToken() {
-        return document.querySelector('meta[name="csrf-token"]')?.content || '';
-    }
+        fitBtn: '#fitBtn',
+        expandAllBtn: '#expandAllBtn',
+        collapseAllBtn: '#collapseAllBtn',
 
-    const CY_STYLE = [
-        { selector: 'node', style: {
-            'label':'data(label)','text-valign':'bottom','text-halign':'center',
-            'font-size':'11px','font-weight':'600','color':'#1e293b',
-            'text-wrap':'wrap','text-max-width':'100px','text-margin-y':'5px',
-            'width':'42px','height':'42px','border-width':'4px','border-color':'#e2e8f0',
-            'border-style':'solid','background-color':'#e2e8f0',
-            'shadow-blur':8,'shadow-color':'rgba(0,0,0,.12)',
-            'shadow-offset-x':0,'shadow-offset-y':2,
-            'transition-property':'border-color,border-width,width,height,border-style',
-            'transition-duration':'0.16s'
-        }},
-        { selector: 'node[status="GREEN"]', style: {
-            'background-color':'#22c55e','border-color':'#16a34a','border-width':3,
-            'color':'#ffffff','font-weight':'700','text-outline-width':2,'text-outline-color':'#16a34a'
-        }},
-        { selector: 'node[status="YELLOW"]', style: {
-            'background-color':'#f59e0b','border-color':'#d97706','border-width':3,
-            'color':'#ffffff','font-weight':'700','text-outline-width':2,'text-outline-color':'#d97706'
-        }},
-        { selector: 'node[status="RED"]', style: {
-            'background-color':'#ef4444','border-color':'#dc2626','border-width':3,
-            'color':'#ffffff','font-weight':'700','text-outline-width':2,'text-outline-color':'#dc2626'
-        }},
-        { selector: 'node.collapsed', style: {
-            'border-color':'#f59e0b','border-width':'5px','border-style':'double',
-            'label': function(ele) {
-                const lbl = ele.data('label') || ele.data('hostname') || ele.data('id') || '';
-                const hiddenCount = ele.data('hiddenCount') || 0;
-                return hiddenCount > 0 ? lbl + '\n' + hiddenCount + ' devices' : lbl;
-            },
-            'font-size':'10px','font-weight':'600','color':'#1e293b',
-            'text-valign':'bottom','text-halign':'center','text-margin-y':'5px',
-            'text-wrap':'wrap','text-max-width':'110px'
-        }},
-        { selector: 'node.collapsed-child', style: {
-            'opacity':0.3,'border-color':'#94a3b8','border-style':'dotted'
-        }},
-        { selector: 'node.hidden-child', style: { 'display':'none' } },
-        { selector: 'edge.hidden-edge', style: { 'display':'none' } },
-        { selector: 'node.virtual-root', style: { 'display':'none' } },
-        { selector: 'node.hovered', style: {
-            'border-color':'#2563eb','border-width':'4px','border-style':'solid',
-            'width':'52px','height':'52px','shadow-blur':16,'shadow-color':'rgba(37,99,235,.3)'
-        }},
-        { selector: 'node:selected', style: { 'border-color':'#2563eb','border-width':'4px','border-style':'solid' } },
-        { selector: 'edge[relationship="child"]', style: {
-            'curve-style':'bezier','width':3,'line-color':'#cbd5e1',
-            'target-arrow-shape':'triangle','target-arrow-color':'#cbd5e1',
-            'arrow-scale':0.8,'label':'','overlay-padding':4,'opacity':0.8
-        }},
-        { selector: 'edge[relationship="child"][status="true"]', style: {
-            'line-color':'#22c55e','target-arrow-color':'#22c55e','width':3,'opacity':1.0
-        }},
-        { selector: 'edge[relationship="child"][status="false"]', style: {
-            'line-color':'#ef4444','target-arrow-color':'#ef4444','line-style':'dashed','width':3,'opacity':1.0
-        }},
-        { selector: 'edge[relationship="link"]', style: {
-            'curve-style':'bezier','line-style':'dotted','opacity':0.6,'width':2,
-            'target-arrow-shape':'triangle','target-arrow-color':'#94a3b8',
-            'arrow-scale':0.6,'label':'','line-color':'#94a3b8'
-        }},
-        { selector: 'edge[relationship="link"][status="true"]', style: {
-            'line-color':'#22c55e','target-arrow-color':'#22c55e','opacity':0.8,'width':2
-        }},
-        { selector: 'edge[relationship="link"][status="false"]', style: {
-            'line-color':'#ef4444','target-arrow-color':'#ef4444','line-style':'dashed','opacity':0.8,'width':2
-        }},
-        { selector: 'edge', style: {
-            'curve-style':'bezier','width':2,'line-color':'#94a3b8',
-            'target-arrow-shape':'triangle','target-arrow-color':'#94a3b8','label':''
-        }}
-    ];
+        resetLayoutBtn: '#resetLayoutBtn',
+        lockLayoutBtn: '#lockLayoutBtn',
 
-    /* ── Elements ── */
-    function findRoots(nodes, edges) {
-        const childSet = new Set(edges.filter(e => (e.data.relationship || 'child') === 'child').map(e => e.data.target));
-        return nodes.filter(n => !childSet.has(n.data.id));
-    }
+        pingBtn: '#pingBtn',
+        refreshBtn: '#refreshBtn',
 
-    function prepareElements(rawData) {
-        const nodes = [...(rawData.nodes || [])];
-        const edges = [...(rawData.edges || [])];
-        const roots = findRoots(nodes, edges);
-        
-        /* DEBUG: Print roots to verify edge direction */
-        console.log('[TOPOLOGY] ROOTS:', roots.map(r => r.data.id));
-        
-        let virtualRootId = null;
-        if (roots.length > 1) {
-            virtualRootId = '__virtual_root__';
-            nodes.unshift({ data: { id: virtualRootId, label: '', hostname: '', status: 'GREEN', childCount: roots.length } });
-            roots.forEach(r => edges.push({ data: { source: virtualRootId, target: r.data.id, relationship: 'child' } }));
-        } else if (roots.length === 0 && nodes.length > 0) {
-            virtualRootId = '__virtual_root__';
-            nodes.unshift({ data: { id: virtualRootId, label: '', hostname: '', status: 'GREEN', childCount: nodes.length } });
-            nodes.slice(1).forEach(n => edges.push({ data: { source: virtualRootId, target: n.data.id, relationship: 'child' } }));
-        }
-        const hideIds = virtualRootId ? [virtualRootId] : [];
-        return {
-            nodes: nodes.filter(n => !hideIds.includes(n.data.id)),
-            edges: edges.filter(e => !hideIds.includes(e.data.source) && !hideIds.includes(e.data.target)),
-            allNodes: nodes, allEdges: edges, virtualRootId
-        };
-    }
+        searchInput: '#searchInput',
 
-    function buildTreePositions(nodes, edges) {
-        const VGAP = 160, HGAP = 120;
-        const children = {}, inDeg = {};
-        nodes.forEach(n => { children[n.data.id] = []; inDeg[n.data.id] = 0; });
-        edges.filter(e => (e.data.relationship || 'child') === 'child').forEach(e => { const s = e.data.source, t = e.data.target; if (children[s] && !children[s].includes(t)) children[s].push(t); if (t in inDeg) inDeg[t] = (inDeg[t] || 0) + 1; });
-        const roots = nodes.filter(n => inDeg[n.data.id] === 0);
-        if (!roots.length) return {};
-        const subtreeLeaves = (id, seen = new Set()) => { if (seen.has(id)) return 1; seen.add(id); const ch = children[id] || []; return ch.length ? ch.reduce((s, c) => s + subtreeLeaves(c, seen), 0) : 1; };
-        const pos = {};
-        const placed = new Set();
-        const place = (id, cx, depth, seen = new Set()) => {
-            if (seen.has(id) || placed.has(id)) return; seen.add(id); placed.add(id);
-            pos[id] = { x: cx, y: depth * VGAP + 80 };
-            const ch = (children[id] || []).filter(c => !seen.has(c) && !placed.has(c));
-            if (!ch.length) return;
-            const total = ch.reduce((s, c) => s + subtreeLeaves(c), 0);
-            let ox = cx - ((total - 1) / 2) * HGAP;
-            ch.forEach(c => { const lv = subtreeLeaves(c); place(c, ox + ((lv - 1) / 2) * HGAP, depth + 1, seen); ox += lv * HGAP; });
-        };
-        let offset = 0;
-        roots.forEach(root => { place(root.data.id, offset + (subtreeLeaves(root.data.id) * HGAP) / 2, 0); offset = Math.max(...Object.values(pos).map(p => p.x)) + HGAP * 3; });
-        nodes.forEach(n => { if (!placed.has(n.data.id)) { pos[n.data.id] = { x: offset, y: 80 }; offset += HGAP; placed.add(n.data.id); } });
-        return pos;
-    }
+        legendBox: '#legendBox',
+        legendToggle: '#legendToggle',
+        legendIcon: '#legendIcon',
 
-    /* ── Map building — O(1) lookups, built once per graph load ── */
-    function buildHierarchyMaps() {
-        childrenMap.clear();
-        parentMap.clear();
-        cy.nodes().forEach(n => {
-            childrenMap.set(n.id(), new Set());
-            parentMap.set(n.id(), new Set());
-        });
-        cy.edges().filter(e => (e.data('relationship') || 'child') === 'child').forEach(e => {
-            const src = e.data('source'), tgt = e.data('target');
-            if (childrenMap.has(src)) childrenMap.get(src).add(tgt);
-            if (parentMap.has(tgt)) parentMap.get(tgt).add(src);
-        });
-    }
+        nodeTooltip: '#nodeTooltip',
 
-    /* ── Topology status — derived from children, bottom-up ── */
-    function calculateTopologyStatus() {
-        const visited = new Set();
-        function calc(nodeId) {
-            if (visited.has(nodeId)) {
-                const n = cy.getElementById(nodeId);
-                return n.length ? n.data('status') : 'GREEN';
-            }
-            visited.add(nodeId);
-            const children = [...directChildIds(nodeId)];
-            if (!children.length) {
-                const n = cy.getElementById(nodeId);
-                return n.length ? n.data('status') : 'GREEN';
-            }
-            let green = 0, red = 0;
-            children.forEach(cid => { const s = calc(cid); if (s === 'GREEN') green++; else red++; });
-            let status = green === children.length ? 'GREEN' : red === children.length ? 'RED' : 'YELLOW';
-            const node = cy.getElementById(nodeId);
-            if (node.length) { node.data('status', status); node.data('upChildren', green); node.data('downChildren', red); }
-            return status;
-        }
-        cy.nodes().forEach(n => calc(n.id()));
-    }
+        ctxMenu: '#ctxMenu',
 
-    function updateParentStatus(nodeId) {
-        const ancestors = new Set();
-        function walkUp(nid) { ancestors.add(nid); for (const pid of getParentIds(nid)) { if (!ancestors.has(pid)) walkUp(pid); } }
-        walkUp(nodeId);
-        const visited = new Set();
-        function calc(nid) {
-            if (visited.has(nid)) { const n = cy.getElementById(nid); return n.length ? n.data('status') : 'GREEN'; }
-            visited.add(nid);
-            const children = [...directChildIds(nid)];
-            if (!children.length) { const n = cy.getElementById(nid); return n.length ? n.data('status') : 'GREEN'; }
-            let green = 0, red = 0;
-            children.forEach(cid => { const s = calc(cid); if (s === 'GREEN') green++; else red++; });
-            let status = green === children.length ? 'GREEN' : red === children.length ? 'RED' : 'YELLOW';
-            const node = cy.getElementById(nid);
-            if (node.length) { node.data('status', status); node.data('upChildren', green); node.data('downChildren', red); }
-            return status;
-        }
-        ancestors.forEach(nid => calc(nid));
-    }
+        modalOverlay: '#linkModalOverlay',
+        modalTitle: '#linkModalTitle',
+        modalBody: '#linkModalBody',
+        modalClose: '#modalCloseBtn',
 
-    function animateRecovery(node) {
-        node.animate({ style: { 'width': '52px', 'height': '52px' } }, { duration: 300 });
-        setTimeout(() => { node.animate({ style: { 'width': '42px', 'height': '42px' } }, { duration: 300 }); }, 300);
-    }
-    function animateFailure(node) {
-        const pos = node.position();
-        node.animate({ position: { x: pos.x + 8, y: pos.y } }, { duration: 80 });
-        setTimeout(() => { node.animate({ position: pos }, { duration: 80 }); }, 80);
-    }
+        minimapEl: '#cy-minimap',
 
-    /* ── Tree helpers — O(1) map lookups, no edge scanning ── */
-    function directChildren(nodeId) {
-        const ids = childrenMap.get(nodeId);
-        if (!ids || ids.size === 0) return [];
-        return Array.from(ids).map(id => cy.nodes(`[id="${id}"]`)).filter(n => n.length > 0);
-    }
-    function directChildIds(nodeId) { return childrenMap.get(nodeId) || new Set(); }
-    function getParents(nodeId) {
-        const ids = parentMap.get(nodeId);
-        if (!ids || ids.size === 0) return [];
-        return Array.from(ids).map(id => cy.nodes(`[id="${id}"]`)).filter(n => n.length > 0);
-    }
-    function getParentIds(nodeId) { return parentMap.get(nodeId) || new Set(); }
+        kpiTotal: '#kpiTotal',
+        kpiUp: '#kpiUp',
+        kpiDown: '#kpiDown',
 
-    function hasVisibleParent(childId, collapsingParent) {
-        for (const pid of getParentIds(childId)) {
-            if (pid !== collapsingParent && !collapsedNodes.has(pid)) {
-                const pNode = cy.nodes(`[id="${pid}"]`);
-                if (pNode.length && !pNode.hasClass('hidden-child')) return true;
-            }
-        }
-        return false;
-    }
+        alertPanel: '#alertPanel',
+        alertList: '#alertList',
+        alertCount: '#alertCount',
 
-    function shouldHide(nodeId, collapsingRoot) {
-        const parents = getParentIds(nodeId);
-        if (parents.size === 0) return false;
-        for (const pid of parents) {
-            if (pid !== collapsingRoot && !collapsedNodes.has(pid)) {
-                const pNode = cy.nodes(`[id="${pid}"]`);
-                if (pNode.length && !pNode.hasClass('hidden-child')) return false;
-            }
-        }
-        return true;
-    }
+        exitBtn: '#exitBtn',
 
-    function getVisibleDescendants(nodeId) {
-        const result = [];
-        const visited = new Set();
-        const queue = [nodeId];
-        visited.add(nodeId);
-        while (queue.length > 0) {
-            const currentId = queue.shift();
-            for (const cid of directChildIds(currentId)) {
-                if (visited.has(cid)) continue;
-                visited.add(cid);
-                if (shouldHide(cid, nodeId)) {
-                    result.push(cid);
-                    queue.push(cid);
-                }
-            }
-        }
-        return result;
-    }
+        categoryMenu: '#categoryMenu',
 
-    function hideDescendants(nodeId) {
-        const descendants = getVisibleDescendants(nodeId);
-        descendants.forEach(cid => {
-            const child = cy.nodes(`[id="${cid}"]`);
-            if (!child.length) return;
-            if (collapsedNodes.has(cid) || child.hasClass('hidden-child')) {
-                cy.edges(`[source="${nodeId}"][target="${cid}"]`).addClass('hidden-edge');
-                cy.edges(`[source="${cid}"][target="${nodeId}"]`).addClass('hidden-edge');
-                return;
-            }
-            child.addClass('hidden-child');
-            cy.edges().filter(e => (e.data('source') === cid || e.data('target') === cid)).forEach(e => e.addClass('hidden-edge'));
-        });
-    }
-
-    function showDirectChildren(nodeId, visited) {
-        if (!visited) visited = new Set();
-        for (const cid of directChildIds(nodeId)) {
-            if (visited.has(cid)) continue;
-            visited.add(cid);
-            const child = cy.nodes(`[id="${cid}"]`);
-            if (!child.length) continue;
-            child.removeClass('hidden-child collapsed-child');
-            cy.edges(`[source="${nodeId}"][target="${cid}"]`).removeClass('hidden-edge');
-            cy.edges(`[source="${cid}"][target="${nodeId}"]`).removeClass('hidden-edge');
-            cy.connectedEdges(`[source="${cid}"],[target="${cid}"]`).forEach(e => {
-                const otherId = e.data('source') === cid ? e.data('target') : e.data('source');
-                const other = cy.nodes(`[id="${otherId}"]`);
-                if (other.length && !other.hasClass('hidden-child')) e.removeClass('hidden-edge');
-            });
-            if (collapsedNodes.has(cid)) child.addClass('collapsed');
-            else showDirectChildren(cid, visited);
-        }
-    }
-
-    function collapseNode(nodeId) {
-        const node = cy.nodes(`[id="${nodeId}"]`);
-        if (!node.length) return;
-        const hiddenCount = getVisibleDescendants(nodeId).length;
-        collapsedNodes.add(nodeId);
-        node.data('hiddenCount', hiddenCount);
-        node.addClass('collapsed');
-        hideDescendants(nodeId);
-    }
-
-    function collapseNodeOnly(nodeId) {
-        const node = cy.nodes(`[id="${nodeId}"]`);
-        if (!node.length) return;
-        const childIds = directChildIds(nodeId);
-        collapsedNodes.add(nodeId);
-        node.data('hiddenCount', childIds.size);
-        node.addClass('collapsed');
-        for (const cid of childIds) {
-            const child = cy.nodes(`[id="${cid}"]`);
-            if (!child.length) continue;
-            if (shouldHide(cid, nodeId)) child.addClass('hidden-child');
-            else child.addClass('collapsed-child');
-            cy.edges(`[source="${nodeId}"][target="${cid}"]`).addClass('hidden-edge');
-            cy.edges(`[source="${cid}"][target="${nodeId}"]`).addClass('hidden-edge');
-        }
-    }
-
-    function expandNode(nodeId) {
-        const node = cy.nodes(`[id="${nodeId}"]`);
-        if (!node.length) return;
-        collapsedNodes.delete(nodeId);
-        node.data('hiddenCount', 0);
-        node.removeClass('collapsed');
-        showDirectChildren(nodeId);
-    }
-
-    function collapseAll() {
-        cy.nodes().forEach(n => { if (n.data('hasChildren')) collapseNode(n.id()); });
-        cy.animate({ fit: { eles: cy.elements(':visible'), padding: 40 } }, { duration: 350 });
-        scheduleSave();
-    }
-
-    function expandAll() {
-        cy.nodes().forEach(n => {
-            collapsedNodes.delete(n.id());
-            n.removeClass('collapsed hidden-child collapsed-child');
-            n.data('hiddenCount', 0);
-        });
-        cy.edges().forEach(e => e.removeClass('hidden-edge'));
-        cy.animate({ fit: { eles: cy.elements(':visible'), padding: 40 } }, { duration: 350 });
-        scheduleSave();
-    }
-
-    function computeDepthMap() {
-        depthMap = {};
-        const roots = [];
-        parentMap.forEach((parents, nid) => { if (parents.size === 0) roots.push(nid); });
-        const queue = [];
-        const visited = new Set();
-        roots.forEach(r => { depthMap[r] = 0; queue.push(r); visited.add(r); });
-        while (queue.length > 0) {
-            const cid = queue.shift();
-            const d = depthMap[cid];
-            for (const childId of directChildIds(cid)) {
-                if (!visited.has(childId)) {
-                    visited.add(childId);
-                    depthMap[childId] = d + 1;
-                    queue.push(childId);
-                }
-            }
-        }
-        cy.nodes().forEach(n => { if (!(n.id() in depthMap)) depthMap[n.id()] = 0; });
-    }
-
-    function getNodeDepth(nodeId) {
-        if (!depthMap) computeDepthMap();
-        return depthMap[nodeId] || 0;
-    }
-
-    function computeChildCountMap() {
-        childCountMap = {};
-        childrenMap.forEach((ids, nid) => { childCountMap[nid] = ids.size; });
-    }
-
-    function tagParentNodes() {
-        computeChildCountMap();
-        cy.nodes().forEach(node => {
-            const count = childCountMap[node.id()] || 0;
-            const pCount = parentMap.has(node.id()) ? parentMap.get(node.id()).size : 0;
-            node.data('hasChildren', count > 0);
-            node.data('childCount', count);
-            node.data('parentCount', pCount);
-        });
-    }
-
-    /* ── Info bar ── */
-    function updateInfo() {
-        const total = cy.nodes().length;
-        const up = cy.nodes('[status="GREEN"]').length;
-        const down = cy.nodes('[status="RED"]').length + cy.nodes('[status="YELLOW"]').length;
-        document.getElementById('kpiTotal').textContent = total;
-        document.getElementById('kpiUp').textContent = up;
-        document.getElementById('kpiDown').textContent = down;
-    }
-
-    /* ── Persist state ── */
-    async function loadDashboardState() {
-        try { const r = await fetch('/api/dashboard-state'); if (!r.ok) return null; return await r.json(); } catch { return null; }
-    }
-    function scheduleSave() { if (suppressSave) return; clearTimeout(saveTimer); saveTimer = setTimeout(persistState, 1200); }
-    async function persistState() {
-        if (!cy) return;
-        const pan = cy.pan();
-        const positions = {};
-        cy.nodes().forEach(n => { const p = n.position(); positions[n.id()] = { x: p.x, y: p.y }; });
-        try {
-            await fetch('/api/dashboard-state', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-                body: JSON.stringify({ zoom: cy.zoom(), pan_x: pan.x, pan_y: pan.y, collapsed: Array.from(collapsedNodes), node_positions: positions, layout_locked: layoutLocked })
-            });
-            flashSyncBadge();
-        } catch {}
-    }
-    function flashSyncBadge() { const b = document.getElementById('syncBadge'); b.classList.add('show'); setTimeout(() => b.classList.remove('show'), 2200); }
-
-    /* ── Lock layout ── */
-    function applyLockState() {
-        const btn = document.getElementById('lockLayoutBtn');
-        if (layoutLocked) {
-            cy.nodes().ungrabify();
-            btn.innerHTML = '<i class="fas fa-lock"></i> Locked';
-            btn.classList.add('active-lock');
-        } else {
-            cy.nodes().grabify();
-            btn.innerHTML = '<i class="fas fa-lock-open"></i> Unlocked';
-            btn.classList.remove('active-lock');
-        }
-    }
-
-    /* ── Ping flash ── */
-    function showPingFlash(msg) {
-        const el = document.getElementById('pingFlash');
-        el.innerHTML = msg; el.style.display = 'block';
-        setTimeout(() => { el.style.display = 'none'; }, 6000);
-    }
-
-    /* ── Init graph ── */
-    async function initGraph(rawData, savedState) {
-        const cyEl = document.getElementById('cy');
-        const loadEl = document.getElementById('loading');
-        loadEl.style.display = 'none';
-        cyEl.style.display = 'block';
-        if (cy) { cy.destroy(); cy = null; }
-
-        /* Invalidate caches */
-        depthMap = null;
-        childCountMap = null;
-
-        const prep = prepareElements(rawData);
-        const treePos = buildTreePositions(prep.allNodes, prep.allEdges);
-
-        cy = cytoscape({
-            container: cyEl,
-            style: CY_STYLE,
-            minZoom: 0.1, maxZoom: 5,
-            boxSelectionEnabled: false,
-            layout: { name: 'preset' },
-            elements: {
-                nodes: prep.allNodes.map(n => ({ 
-                    data: n.data, 
-                    position: treePos[n.data.id] || { x: 400, y: 300 },
-                    classes: n.data.id === prep.virtualRootId ? 'virtual-root' : ''
-                })),
-                edges: prep.allEdges.map(e => ({ 
-                    data: { 
-                        ...e.data, 
-                        status: String(e.data.status === true || e.data.status === 'true'), 
-                        relationship: e.data.relationship || 'child' 
-                    } 
-                }))
-            }
-        });
-
-        tagParentNodes();
-        buildHierarchyMaps();
-        calculateTopologyStatus();
-        computeDepthMap();
-
-        const savedPos = savedState && savedState.node_positions;
-        const hasSavedPos = savedPos && Object.keys(savedPos).length;
-
-        /* Only restore saved positions when layout is explicitly locked */
-        if (savedState && savedState.layout_locked && hasSavedPos) {
-            cy.nodes().forEach(n => { if (savedPos[n.id()]) n.position(savedPos[n.id()]); });
-        }
-
-        if (savedState && savedState.collapsed && savedState.collapsed.length) {
-            savedState.collapsed.forEach(nid => collapseNode(nid));
-        }
-
-        /* CLEAN LOGIC: If layout was locked, skip ELK and restore saved state */
-        if (savedState && savedState.layout_locked) {
-            /* Restore saved positions and lock state (no ELK needed) */
-            const savedPos = savedState.node_positions;
-            if (savedPos && Object.keys(savedPos).length) {
-                cy.nodes().forEach(n => { if (savedPos[n.id()]) n.position(savedPos[n.id()]); });
-                console.log('[TOPOLOGY] Restored locked positions from saved state');
-            }
-
-            layoutLocked = true;
-            applyLockState();
-            console.log('[TOPOLOGY] Layout is LOCKED (skipped ELK)');
-
-            /* Restore viewport */
-            if (typeof savedState.zoom === 'number' && savedState.zoom > 0) {
-                cy.zoom(savedState.zoom);
-                cy.pan({ x: savedState.pan_x || 0, y: savedState.pan_y || 0 });
-                console.log('[TOPOLOGY] Viewport restored from locked state');
-            } else {
-                cy.fit(40);
-                cy.center();
-            }
-        } else {
-            /* Layout is unlocked: Run ELK to establish proper hierarchy */
-            try {
-                await new Promise((resolve, reject) => {
-                    cy.one('layoutstop', () => resolve(true));
-                    cy.one('layouterror', (e) => reject(e));
-                    cy.layout({
-                        name: 'elk',
-                        elk: {
-                            'elk.algorithm': 'layered',
-                            'elk.direction': 'DOWN',
-                            'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-                            'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
-                            'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-                            'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
-                            'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED'
-                        },
-                        fit: true,
-                        animate: false,
-                        padding: 50
-                    }).run();
-                });
-                console.log('[TOPOLOGY] ELK layered layout applied on initial load (DOWN direction with hierarchy enforcement)');
-                
-                /* DEBUG: Print all node positions and depths */
-                console.log('[TOPOLOGY] Node hierarchy after ELK layout:');
-                cy.nodes().filter(n => n.data('id') !== '__virtual_root__').forEach(n => {
-                    console.log(
-                        '  ',
-                        n.id().padEnd(20),
-                        'depth=' + getNodeDepth(n.id()),
-                        'y=' + Math.round(n.position().y),
-                        'x=' + Math.round(n.position().x)
-                    );
-                });
-                
-                /* DEBUG: Print root nodes */
-                const roots = cy.nodes().filter(n => getParentIds(n.id()).size === 0 && n.data('id') !== '__virtual_root__');
-                console.log('[TOPOLOGY] Root nodes:', roots.map(n => n.id()));
-            } catch (err) {
-                console.error('[TOPOLOGY] ELK layout failed on load, using Dagre fallback', err);
-                /* Fallback to Dagre if ELK fails */
-                try {
-                    await new Promise((resolve, reject) => {
-                        cy.one('layoutstop', () => resolve(true));
-                        cy.one('layouterror', (e) => reject(e));
-                        cy.layout({
-                            name: 'dagre',
-                            rankDir: 'TB',
-                            rankSep: 150,
-                            nodeSep: 100,
-                            edgeSep: 60,
-                            fit: true,
-                            animate: false,
-                            padding: 50
-                        }).run();
-                    });
-                    console.log('[TOPOLOGY] Dagre layout applied as fallback');
-                } catch (err2) {
-                    console.error('[TOPOLOGY] Dagre also failed', err2);
-                    cy.fit(40);
-                    cy.center();
-                }
-            }
-        }
-
-        persistState();
-
-        document.getElementById('legendBox').style.display = 'block';
-        updateInfo();
-        setupCyEvents(cyEl);
-        initMinimap();
-    }
-
-    /* ── Minimap ── */
-    function initMinimap() {
-        if (!cy || navInstance) return;
-        const minimapEl = document.getElementById('cy-minimap');
-        if (minimapEl && typeof cy.navigator === 'function') {
-            navInstance = cy.navigator({
-                container: minimapEl,
-                viewLiveFramerate: 0,
-                thumbnailLiveFramerate: -1,
-                thumbnailPanFadeTime: 0,
-                dblClickDelay: 300,
-                showEdgeLabels: false,
-                style: { colors: { bg: '#1e293b', node: '#3b82f6', nodeOutline: '#2563eb', parent: 'rgba(59,130,246,.12)', parentOutline: '#2563eb', edge: '#475569', edgeOutline: '#334155', overlay: 'rgba(59,130,246,.08)', overlayOutline: 'rgba(59,130,246,.25)' }, size: [180, 120] }
-            });
-            minimapEl.style.display = 'block';
-        }
-    }
-
-    /* ── Cytoscape events ── */
-    function setupCyEvents(cyEl) {
-        cy.on('mouseover', 'node', function (evt) {
-            evt.target.addClass('hovered');
-            renderTooltip(evt.target);
-            positionTooltip(evt);
-        });
-        cy.on('mouseout', 'node', function (evt) {
-            evt.target.removeClass('hovered');
-            document.getElementById('nodeTooltip').style.display = 'none';
-        });
-        cy.on('mousemove', 'node', positionTooltip);
-
-        cy.on('tap', 'node', function (evt) { updateSiteInfoPanel(evt.target.data()); });
-        cy.on('tap', 'edge', function (evt) { openEdgeModal(evt.target.data()); });
-
-        cyEl.addEventListener('dblclick', function (e) {
-            const point = cy.renderer().projectIntoViewport(e.clientX, e.clientY);
-            const hit = cy.nodes().filter(n => {
-                const bb = n.boundingBox();
-                return point[0] >= bb.x1 && point[0] <= bb.x2 && point[1] >= bb.y1 && point[1] <= bb.y2;
-            });
-            const node = hit[0];
-            if (!node || !node.data('hasChildren')) return;
-            const nid = node.id();
-            if (collapsedNodes.has(nid)) { expandNode(nid); } else { collapseNode(nid); }
-            cy.animate({ fit: { eles: cy.elements(':visible'), padding: 40 } }, { duration: 380 });
-            scheduleSave();
-        });
-
-        cyEl.addEventListener('contextmenu', function (e) {
-            e.preventDefault();
-            const point = cy.renderer().projectIntoViewport(e.clientX, e.clientY);
-            const hit = cy.nodes().filter(n => {
-                const bb = n.boundingBox();
-                return point[0] >= bb.x1 && point[0] <= bb.x2 && point[1] >= bb.y1 && point[1] <= bb.y2;
-            });
-            const node = hit[0];
-            if (!node) return;
-            ctxNode = node;
-            openCtxMenu(e.clientX, e.clientY);
-        });
-
-        cy.on('dragfree', 'node', function () { scheduleSave(); });
-        cy.on('viewport', function () { document.getElementById('nodeTooltip').style.display = 'none'; scheduleSave(); });
-        cy.on('layoutstop', function () { scheduleSave(); });
-    }
-
-    /* ── Tooltip ── */
-    function renderTooltip(node) {
-        const d = node.data();
-        const isUp = d.status === 'GREEN', isY = d.status === 'YELLOW';
-        const col = isUp ? '#4ade80' : (isY ? '#fcd34d' : '#f87171');
-        const ico = isUp ? 'fa-circle-check' : (isY ? 'fa-circle-exclamation' : 'fa-circle-xmark');
-        const stat = isUp ? 'ONLINE' : (isY ? 'PARTIAL' : 'OFFLINE');
-        const childRow = d.hasChildren
-            ? `<div class="tt-children"><i class="fas fa-sitemap"></i>${d.childCount} child${d.childCount>1?'ren':''} · dbl-click to ${collapsedNodes.has(d.id)?'expand':'collapse'}</div>`
-            : '';
-        document.getElementById('nodeTooltip').innerHTML =
-            `<div class="tt-title"><i class="fas fa-server" style="color:#93c5fd;font-size:13px;"></i>${d.hostname||d.device_name||d.id}</div>` +
-            `<div class="tt-divider"></div>` +
-            `<div class="tt-row"><span class="tt-label">IP Address</span><span class="tt-value">${d.id}</span></div>` +
-            (d.device_name&&d.hostname&&d.device_name!==d.hostname?`<div class="tt-row"><span class="tt-label">Device name</span><span class="tt-value">${d.device_name}</span></div>`:'') +
-            `<div class="tt-row"><span class="tt-label">Location</span><span class="tt-value">${d.location||'—'}</span></div>` +
-            `<div class="tt-row"><span class="tt-label">Category</span><span class="tt-value">${d.category||'—'}</span></div>` +
-            `<div class="tt-row"><span class="tt-label">Model</span><span class="tt-value">${d.model||'—'}</span></div>` +
-            `<div class="tt-row"><span class="tt-label">Status</span><span class="tt-status" style="color:${col}"><i class="fas ${ico}"></i>${stat}</span></div>` +
-            childRow +
-            `<div class="tt-hint"><i class="fas fa-mouse me-1"></i>Dbl-click expand · Right-click options</div>`;
-        document.getElementById('nodeTooltip').style.display = 'block';
-    }
-
-    function positionTooltip(evt) {
-        const tt = document.getElementById('nodeTooltip');
-        const rect = cy.container().getBoundingClientRect();
-        const r = evt.target.renderedPosition();
-        let left = rect.left + r.x + 24, top = rect.top + r.y - 18;
-        if (left + 295 > window.innerWidth) left = rect.left + r.x - 305;
-        if (top + 220 > window.innerHeight) top = window.innerHeight - 230;
-        if (top < 6) top = 6;
-        tt.style.left = left + 'px'; tt.style.top = top + 'px';
-    }
-
-    /* ── Site info panel ── */
-    function updateSiteInfoPanel(d) {
-        const isUp = d.status==='GREEN', isY = d.status==='YELLOW';
-        const bc = isUp ? '#22c55e' : (isY ? '#f59e0b' : '#ef4444');
-        const lb = isUp ? 'ONLINE' : (isY ? 'PARTIAL' : 'OFFLINE');
-        document.getElementById('alertPanel').classList.add('show');
-        document.getElementById('alertPanel').innerHTML =
-            `<div class="alert-head"><span><i class="fas fa-server me-1"></i>${d.hostname||d.device_name||d.id}</span><span style="color:${bc};">${lb}</span></div>` +
-            `<div style="font-size:11px;color:#94a3b8;"><i class="fas fa-map-marker-alt me-1"></i>${d.location||'Unknown'} <i class="fas fa-tag ms-2 me-1"></i>${d.category||'device'}</div>` +
-            (d.hasChildren?`<div style="font-size:11px;color:#3b82f6;margin-top:4px;"><i class="fas fa-sitemap me-1"></i>${d.childCount} children (${collapsedNodes.has(d.id)?'collapsed':'expanded'})</div>`:'');
-        setTimeout(() => { document.getElementById('alertPanel').classList.remove('show'); }, 5000);
-    }
-
-    /* ── Edge modal ── */
-    function openEdgeModal(d) {
-        document.getElementById('linkModalTitle').innerHTML = `<i class="fas fa-exchange-alt me-2" style="color:#3b82f6;"></i>${d.source} ↔ ${d.target}`;
-        const up = d.status===true||d.status==='true';
-        document.getElementById('linkModalBody').innerHTML =
-            `<div style="background:${up?'rgba(34,197,94,.15)':'rgba(239,68,68,.15)'};color:${up?'#4ade80':'#f87171'};text-align:center;padding:10px;border-radius:10px;font-weight:700;margin-bottom:14px;font-size:14px;">` +
-                `<i class="fas ${up?'fa-circle-check':'fa-circle-xmark'} me-2"></i>${up?'LINK IS UP':'LINK IS DOWN'}` +
-            `</div>` +
-            `<table style="width:100%;font-size:13px;border-collapse:collapse;">` +
-                `<tr><th style="width:35%;color:#94a3b8;text-align:left;padding:4px 0;">Source</th><td style="color:#e2e8f0;"><strong>${d.source}</strong> <span style="color:#64748b;">${d.source_location||''}</span></td></tr>` +
-                `<tr><th style="color:#94a3b8;text-align:left;padding:4px 0;">Target</th><td style="color:#e2e8f0;"><strong>${d.target}</strong> <span style="color:#64748b;">${d.destination_location||''}</span></td></tr>` +
-                `<tr><th style="color:#94a3b8;text-align:left;padding:4px 0;">Remark</th><td style="color:#e2e8f0;">${d.label||'—'}</td></tr>` +
-                `<tr><th style="color:#94a3b8;text-align:left;padding:4px 0;">Latency</th><td style="color:#e2e8f0;">${d.latency_ms!=null?d.latency_ms+' ms':'—'}</td></tr>` +
-                `<tr><th style="color:#94a3b8;text-align:left;padding:4px 0;">Last Check</th><td style="color:#e2e8f0;">${d.last_checked||'—'}</td></tr>` +
-            `</table>`;
-        showModal();
-    }
-
-    /* ── Context menu ── */
-    function openCtxMenu(clientX, clientY) {
-        const menu = document.getElementById('ctxMenu');
-        const nid = ctxNode.id(), d = ctxNode.data();
-        const isCollapsed = collapsedNodes.has(nid);
-        const hasChildren = d.hasChildren;
-        const isRoot = (d.parentCount || 0) === 0 && !d.location;
-
-        const upCh = d.upChildren || 0;
-        const downCh = d.downChildren || 0;
-        let statusLine = '';
-        if (upCh + downCh > 0) {
-            const statusColor = d.status === 'GREEN' ? '#22c55e' : d.status === 'RED' ? '#ef4444' : '#f59e0b';
-            statusLine = '<br><span style="font-size:11px;color:' + statusColor + ';">' +
-                (upCh > 0 ? upCh + ' up' : '') +
-                (upCh > 0 && downCh > 0 ? ' · ' : '') +
-                (downCh > 0 ? downCh + ' down' : '') +
-                '</span>';
-        }
-        document.getElementById('ctxIpHeader').innerHTML =
-            '<strong>' + (d.hostname||d.device_name||nid) + '</strong>' +
-            (d.tooltip && d.tooltip !== nid ? '<br><span style="font-size:11px;color:#94a3b8;">' + d.tooltip + '</span>' : '') +
-            statusLine +
-            (d.hiddenCount > 0 ? '<br><span style="font-size:11px;color:#f59e0b;">' + d.hiddenCount + ' devices hidden</span>' : '');
-
-        /* Dynamic menu visibility */
-        document.getElementById('ctxExpand').style.display         = isCollapsed ? 'flex' : 'none';
-        document.getElementById('ctxCollapseNode').style.display   = (!isCollapsed && hasChildren) ? 'flex' : 'none';
-        document.getElementById('ctxCollapseBranch').style.display = (!isCollapsed && hasChildren && d.childCount > 1) ? 'flex' : 'none';
-        document.getElementById('ctxHideNode').style.display       = isRoot ? 'none' : 'flex';
-
-        menu.style.display = 'block';
-        const mw = menu.offsetWidth||205, mh = menu.offsetHeight||240;
-        menu.style.left = (clientX+mw>window.innerWidth?clientX-mw:clientX) + 'px';
-        menu.style.top = (clientY+mh>window.innerHeight?clientY-mh:clientY) + 'px';
-    }
-    function closeCtxMenu() { document.getElementById('ctxMenu').style.display='none'; }
-    document.addEventListener('click', () => closeCtxMenu());
-    document.addEventListener('contextmenu', e => { if(!e.target.closest('#cy')) closeCtxMenu(); });
-
-    document.getElementById('ctxOpenHTTP').addEventListener('click',  () => { if(!ctxNode)return; closeCtxMenu(); window.open('http://'+ctxNode.id(),'_blank'); });
-    document.getElementById('ctxOpenHTTPS').addEventListener('click', () => { if(!ctxNode)return; closeCtxMenu(); window.open('https://'+ctxNode.id(),'_blank'); });
-    document.getElementById('ctxPing').addEventListener('click', () => {
-        if(!ctxNode)return; const ip=ctxNode.id(); closeCtxMenu();
-        fetch('/api/ping/'+ip).catch(()=>{});
-        showPingFlash('<i class="fas fa-satellite-dish"></i> Pinging '+ip+'…');
+        sharedLegend: '#sharedLegend'
     });
-    document.getElementById('ctxExpand').addEventListener('click', () => {
-        if(!ctxNode)return; expandNode(ctxNode.id()); closeCtxMenu();
-        cy.animate({fit:{eles:cy.elements(':visible'),padding:40}},{duration:380});
-        scheduleSave();
-    });
-    document.getElementById('ctxCollapseNode').addEventListener('click', () => {
-        if(!ctxNode)return; collapseNodeOnly(ctxNode.id()); closeCtxMenu();
-        cy.animate({fit:{eles:cy.elements(':visible'),padding:40}},{duration:380});
-        scheduleSave();
-    });
-    document.getElementById('ctxCollapseBranch').addEventListener('click', () => {
-        if(!ctxNode)return; collapseNode(ctxNode.id()); closeCtxMenu();
-        cy.animate({fit:{eles:cy.elements(':visible'),padding:40}},{duration:380});
-        scheduleSave();
-    });
-    document.getElementById('ctxHideNode').addEventListener('click', () => {
-        if(!ctxNode) return;
-        ctxNode.addClass('hidden-child');
-        ctxNode.connectedEdges().addClass('hidden-edge');
-        closeCtxMenu();
-        scheduleSave();
-    });
-    document.getElementById('ctxFocusNode').addEventListener('click', () => {
-        if(!ctxNode) return; closeCtxMenu();
-        cy.animate({ center: { eles: ctxNode }, zoom: 1.4 }, { duration: 400, easing: 'ease-out' });
-    });
-    document.getElementById('ctxDetails').addEventListener('click', () => {
-        if(!ctxNode)return; closeCtxMenu();
-        const d=ctxNode.data();
-        document.getElementById('linkModalTitle').innerHTML=`<i class="fas fa-server me-2" style="color:#3b82f6;"></i>${d.hostname||d.device_name||d.id}`;
-        document.getElementById('linkModalBody').innerHTML=
-            `<table style="width:100%;font-size:13px;border-collapse:collapse;">`+
-            Object.entries(d).filter(([,v])=>v!==undefined&&v!==null&&v!=='')
-            .map(([k,v])=>`<tr><th style="width:35%;color:#94a3b8;font-weight:600;text-align:left;padding:4px 0;">${k}</th><td style="color:#e2e8f0;">${v}</td></tr>`).join('')+
-            `</table>`;
-        showModal();
-    });
-    document.getElementById('ctxDevicePage').addEventListener('click', () => {
-        if(!ctxNode)return; closeCtxMenu();
-        window.open('/device/' + ctxNode.id(), '_blank');
-    });
-
-    /* ── Modal ── */
-    function showModal() { document.getElementById('linkModalOverlay').classList.add('show'); }
-    function hideModal() { document.getElementById('linkModalOverlay').classList.remove('show'); }
-    document.getElementById('modalCloseBtn').addEventListener('click', hideModal);
-    document.getElementById('linkModalOverlay').addEventListener('click', function(e){ if(e.target===this)hideModal(); });
-
-    /* ── Legend toggle ── */
-    document.getElementById('legendToggle').addEventListener('click', () => {
-        document.getElementById('legendBox').classList.toggle('collapsed');
-        document.getElementById('legendIcon').className = document.getElementById('legendBox').classList.contains('collapsed')
-            ? 'fas fa-chevron-right ms-auto' : 'fas fa-chevron-down ms-auto';
-    });
-
-    /* ── Toolbar buttons ── */
-    document.getElementById('searchInput').addEventListener('keyup', e => {
-        if(e.key!=='Enter'||!cy) return;
-        const term=e.target.value.toLowerCase().trim();
-        if(!term) return;
-        const found=cy.nodes().filter(n=>{
-            const d=n.data();
-            return [d.label,d.id,d.device_name,d.hostname,d.location].some(v=>v&&String(v).toLowerCase().includes(term));
-        });
-        if(found.length){
-            if(found[0].hasClass('hidden-child')){
-                let cur=found[0]; const toExp=[];
-                for(let i=0;i<25;i++){
-                    const pe=cy.edges(`[target="${cur.id()}"]`);
-                    if(!pe.length) break;
-                    const pid=pe[0].data('source');
-                    if(collapsedNodes.has(pid)) toExp.push(pid);
-                    cur=cy.nodes(`[id="${pid}"]`);
-                }
-                toExp.reverse().forEach(pid=>expandNode(pid));
-            }
-            cy.animate({center:{eles:found[0]},zoom:2.4},{duration:500});
-            found[0].addClass('hovered');
-            setTimeout(()=>found[0].removeClass('hovered'),2200);
-        }
-    });
-
-    document.getElementById('fitBtn').addEventListener('click', () => { cy?.fit(40); scheduleSave(); });
-    document.getElementById('expandAllBtn').addEventListener('click', expandAll);
-    document.getElementById('collapseAllBtn').addEventListener('click', collapseAll);
-    document.getElementById('resetLayoutBtn').addEventListener('click', async () => {
-    if (layoutLocked) {
-        alert('Layout is locked. Unlock layout before running Auto Adjust.');
-        return;
-    }
-    if (!cy) return;
-    suppressSave = true;
-
-    try {
-        // STEP 1: Clear all collapse/hide state BEFORE running ELK
-        collapsedNodes.clear();
-        cy.nodes().removeClass('collapsed hidden-child collapsed-child');
-        cy.edges().removeClass('hidden-edge');
-        cy.nodes().forEach(n => n.data('hiddenCount', 0));
-
-        // STEP 2: Run ELK on fully-visible graph
-        await new Promise((resolve, reject) => {
-            cy.one('layoutstop', resolve);
-            cy.one('layouterror', reject);
-            cy.layout({
-                name: 'elk',
-                elk: {
-                    'elk.algorithm': 'layered',
-                    'elk.direction': 'DOWN',
-                    'elk.spacing.nodeNode': '80',
-                    'elk.layered.spacing.nodeNodeBetweenLayers': '160',
-                    'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
-                    'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-                },
-                fit: true,
-                padding: 50,
-                animate: true,
-                animationDuration: 500
-            }).run();
-        });
-
-        console.log('[TOPOLOGY] Auto Adjust complete');
-        persistState();
-
-    } catch (err) {
-        console.error('[TOPOLOGY] ELK failed during Auto Adjust', err);
-        // Dagre fallback
-        try {
-            await new Promise((resolve, reject) => {
-                cy.one('layoutstop', resolve);
-                cy.one('layouterror', reject);
-                cy.layout({ name: 'dagre', rankDir: 'TB', rankSep: 160, nodeSep: 100, fit: true, animate: true, animationDuration: 500 }).run();
-            });
-        } catch {}
-    } finally {
-        suppressSave = false;
-    }
 });
-    document.getElementById('lockLayoutBtn').addEventListener('click', () => {
-        if (!cy) return;
-        layoutLocked = !layoutLocked;
-        applyLockState();
-        persistState();
-    });
-    document.getElementById('pingBtn').addEventListener('click', async function(){
-        const btn=this; btn.disabled=true;
-        btn.innerHTML='<span class="spinner" style="width:12px;height:12px;border-width:2px;"></span> Pinging…';
-        try{
-            await fetch('/api/ping/now');
-            const poll=setInterval(async()=>{
-                try{
-                    const r=await fetch('/api/ping/status'); const s=await r.json();
-                    if(!s.running){
-                        clearInterval(poll);
-                        const res = s.last_result || {};
-                        showPingFlash(
-                            `<i class="fas fa-check-circle"></i> Ping completed — Total: ${res.total||0} | Up: ${res.up||0} | Down: ${res.down||0} | ${res.duration||0}s`
-                        );
-                        btn.innerHTML='<i class="fas fa-check"></i> Done';
-                        setTimeout(()=>{ btn.innerHTML='<i class="fas fa-network-wired"></i> Ping All'; btn.disabled=false; },3000);
-                        reloadTopology();
-                    }
-                }catch(ex){}
-            },2000);
-        }catch(ex){
-            btn.innerHTML='<i class="fas fa-exclamation-triangle"></i> Error'; btn.disabled=false;
-            setTimeout(()=>{ btn.innerHTML='<i class="fas fa-network-wired"></i> Ping All'; },2200);
-        }
-    });
-    document.getElementById('refreshBtn').addEventListener('click', reloadTopology);
-    document.getElementById('exitBtn').addEventListener('click', () => { window.close(); if (window.opener) window.close(); else window.location.href = '/dashboard'; });
-
-    function reloadTopology(){
-        if(cy){ cy.destroy(); cy=null; }
-        document.getElementById('cy').style.display='none';
-        document.getElementById('loading').style.display='flex';
-        loadGraph(); loadAlerts(); loadDevices();
-    }
-
-    /* ── Data loaders ── */
-    async function loadGraph(){
-        try{
-            const [topo, state] = await Promise.all([
-                fetch('/api/topology').then(r=>r.json()),
-                loadDashboardState()
-            ]);
-            await initGraph(topo, state);
-        }catch(ex){ console.error('loadGraph:',ex); }
-    }
-
-    async function loadAlerts(){
-        try{
-            const r=await fetch('/api/alerts'); const alerts=await r.json();
-            const count=alerts.length;
-            document.getElementById('alertCount').textContent=count;
-            const list=document.getElementById('alertList');
-            if(count){
-                list.innerHTML=alerts.map(a=>`<div class="alert-item"><i class="fas fa-bell me-1"></i><strong>${a.label}</strong><br><span style="color:#94a3b8;">${a.ip}${a.location?' · '+a.location:''}</span></div>`).join('');
-            } else {
-                list.innerHTML='<div style="color:#64748b;padding:4px;"><i class="fas fa-check-circle" style="color:#22c55e;"></i> No active alerts</div>';
-            }
-        }catch(ex){}
-    }
-
-    async function loadDevices(){
-        try{
-            const r=await fetch('/api/devices-stats'); const data=await r.json();
-            document.getElementById('kpiTotal').textContent=data.total||0;
-            document.getElementById('kpiUp').textContent=data.up||0;
-            document.getElementById('kpiDown').textContent=data.down||0;
-        }catch(ex){}
-    }
-
-    /* ── Boot ── */
-    window.onload = () => {
-        loadAlerts();
-        loadDevices();
-        loadGraph();
-        setInterval(() => { loadAlerts(); loadDevices(); }, 28000);
-    };
-
-    /* ── Socket.IO ── */
-    try {
-        const socket = io();
-        socket.on('device_status_update', data => {
-            if (!cy) return;
-            const changes = data.changes || [];
-            changes.forEach(ch => {
-                const node = cy.nodes(`[id="${ch.id}"]`);
-                if (node.length) {
-                    const oldStatus = node.data('status');
-                    const newStatus = ch.status ? 'GREEN' : 'RED';
-                    if (oldStatus !== newStatus) {
-                        node.data('status', newStatus);
-                        updateParentStatus(ch.id);
-                        if (oldStatus === 'RED' && newStatus === 'GREEN') animateRecovery(node);
-                        else if (oldStatus === 'GREEN' && newStatus === 'RED') animateFailure(node);
-                    }
-                }
-            });
-            loadDevices();
-        });
-        socket.on('dashboard_updated', state => {
-            if (!cy) return;
-            suppressSave = true;
-            const positions = state.node_positions || {};
-            if (Object.keys(positions).length) {
-                cy.nodes().forEach(n => { if(positions[n.id()]) n.position(positions[n.id()]); });
-            }
-            collapsedNodes.clear();
-            (state.collapsed || []).forEach(id => collapsedNodes.add(id));
-            cy.nodes().forEach(n => n.removeClass('collapsed hidden-child collapsed-child'));
-            cy.edges().forEach(e => e.removeClass('hidden-edge'));
-            tagParentNodes();
-            buildHierarchyMaps();
-            calculateTopologyStatus();
-            computeDepthMap();
-            collapsedNodes.forEach(nid => {
-                const node=cy.nodes(`[id="${nid}"]`);
-                if(node.length){ node.addClass('collapsed'); hideDescendants(nid); }
-            });
-            layoutLocked = !!state.layout_locked;
-            applyLockState();
-            suppressSave = false;
-        });
-    } catch(ex) {}
-
-})();
 </script>
 </body>
 </html>

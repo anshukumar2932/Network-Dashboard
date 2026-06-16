@@ -1005,6 +1005,7 @@ def devices_sidebar_api():
 
 @app.route("/api/devices/delete/<ip>", methods=["DELETE"])
 @login_required
+@admin_required
 @require_api_key
 def delete_device_api(ip):
     result = delete_device(ip)

@@ -293,7 +293,9 @@
 {% else %}
 {# ══════════════════════════════════════════════════════════════
    ADD / EDIT FORM — only shown when no pending location flow
+   Admin only
 ════════════════════════════════════════════════════════════════ #}
+{% if is_admin and not need_location_ip %}
 <div class="card mb-4">
     <h5 class="mb-3 fw-semibold">{{ "Edit Link" if edit_link else "Add Link" }}</h5>
     <form method="POST" id="linkForm">
@@ -439,6 +441,7 @@
         </datalist>
     </form>
 </div>
+{% endif %}
 {% endif %}
 
 {# LINKS TABLE #}
@@ -616,11 +619,13 @@
                 </td>
 
                 <td>
+                    {% if is_admin %}
                     <a href="/links?edit={{ link.id }}&page={{ page }}&per_page={{ per_page }}&search_ip={{ search_ip }}&filter_status={{ filter_status }}&filter_category={{ filter_category }}&filter_location={{ filter_location }}&sort_by={{ sort_by }}&sort_order={{ sort_order }}"
                        class="btn btn-sm btn-outline-primary me-1">Edit</a>
                     <a href="/links?delete={{ link.id }}"
                        class="btn btn-sm btn-outline-danger"
                        onclick="return confirm('Delete link #{{ link.id }} ({{ link.source_ip }} → {{ link.destination_ip or 'Unlinked' }})?')">Del</a>
+                    {% endif %}
                 </td>
             </tr>
             {% else %}

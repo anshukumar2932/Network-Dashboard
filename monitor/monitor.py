@@ -1,5 +1,5 @@
 import os
-from db.database import SessionLocal
+from db.database import SessionLocal, invalidate_cache_for
 from db.models import Device, PingHistory, NetworkLink
 from sqlalchemy import delete
 from datetime import datetime, timedelta, timezone
@@ -136,6 +136,7 @@ def run():
         session.execute(delete(PingHistory).where(PingHistory.ping_time < cutoff))
         update_link_status(session)
         session.commit()
+        invalidate_cache_for("topology")
 
         print(f"[MONITOR] Ping results: {ping_ok} OK, {ping_fail} FAIL")
 

@@ -44,8 +44,10 @@
            siteInfoPanel: '#siteInfoPanel',
            // fullscreen-only
            alertPanel:    '#alertPanel',
-           exitBtn:       '#exitBtn',
-       }
+            exitBtn:       '#exitBtn',
+            categoryMenu:    '#categoryMenu',
+            sharedLegend:    '#sharedLegend',
+        }
     ═══════════════════════════════════════════════════════════════ */
 
     /* ── Register ELK ── */
@@ -72,6 +74,9 @@
     const childrenMap    = new Map();
     const parentMap      = new Map();
 
+    /* smart collapse state */
+    const hiddenCategories = new Set();
+
     /* carousel state (dashboard only) */
     let catCarouselData  = [];
     let alertInterval    = null;
@@ -83,8 +88,13 @@
     let monitorBannerState = 'ok';
 
     /* ── Helpers ── */
-    function $el(id) { return id ? document.querySelector(id) : null; }
+    function $el(sel) { return sel ? document.querySelector(sel) : null; }
     function getCsrfToken() { return document.querySelector('meta[name="csrf-token"]')?.content || ''; }
+
+    /* ═══════════════════════════════════════════════════════════════
+       RESOLVED ELEMENTS — lookups happen once at init, not per-frame
+    ═══════════════════════════════════════════════════════════════ */
+    const el = {};
 
     /* ═══════════════════════════════════════════════════════════════
        CYTOSCAPE STYLE
@@ -114,17 +124,34 @@
             'color': '#ffffff', 'font-weight': '700', 'text-outline-width': 2, 'text-outline-color': '#dc2626'
         }},
         { selector: 'node.collapsed', style: {
-            'border-color': '#f59e0b', 'border-width': '5px', 'border-style': 'double',
+            'border-width': '5px', 'border-style': 'double',
+            'background-image': 'linear-gradient(135deg, rgba(255,255,255,0.15) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.15) 75%, transparent 75%, transparent)',
+            'background-size': '8px 8px',
             'label': function(ele) {
-                const lbl = ele.data('label') || ele.data('hostname') || ele.data('id') || '';
-                const h   = ele.data('hiddenCount') || 0;
-                return h > 0 ? lbl + '\n' + h + ' devices' : lbl;
+                const lbl  = ele.data('label') || ele.data('hostname') || ele.data('id') || '';
+                const h    = ele.data('hiddenCount') || 0;
+                const up   = ele.data('upChildren') || 0;
+                const down = ele.data('downChildren') || 0;
+                if (h === 0) return lbl;
+                const statusLine = (up + down > 0) ? `\n${up} up · ${down} down` : '';
+                return lbl + '\n▼ ' + h + ' hidden' + statusLine;
             },
             'font-size': '10px', 'font-weight': '600', 'color': '#1e293b',
             'text-valign': 'bottom', 'text-halign': 'center', 'text-margin-y': '5px',
             'text-wrap': 'wrap', 'text-max-width': '110px'
         }},
-        { selector: 'node.collapsed-child', style: { 'opacity': 0.3, 'border-color': '#94a3b8', 'border-style': 'dotted' }},
+        { selector: 'node.collapsed[status="GREEN"]', style: {
+            'border-color': '#22c55e', 'background-color': '#22c55e'
+        }},
+        { selector: 'node.collapsed[status="YELLOW"]', style: {
+            'border-color': '#f59e0b', 'background-color': '#f59e0b'
+        }},
+        { selector: 'node.collapsed[status="RED"]', style: {
+            'border-color': '#ef4444', 'background-color': '#ef4444'
+        }},
+        { selector: 'node.shared-node', style: {
+            'border-style': 'dashed', 'border-width': '3px', 'border-color': '#8b5cf6'
+        }},
         { selector: 'node.hidden-child',    style: { 'display': 'none' }},
         { selector: 'edge.hidden-edge',     style: { 'display': 'none' }},
         { selector: 'node.virtual-root',    style: { 'display': 'none' }},
@@ -240,8 +267,11 @@
 
     /* ═══════════════════════════════════════════════════════════════
        STATUS PROPAGATION
+       Only overwrites VIRTUAL / AGGREGATION (parent) nodes.
+       Leaf/device nodes keep the status computed server-side by
+       derive_node_status() and are never touched here.
     ═══════════════════════════════════════════════════════════════ */
-    function calculateTopologyStatus() {
+    function computeAggregationStatus() {
         const visited = new Set();
         function calc(nodeId) {
             if (visited.has(nodeId)) { const n = cy.getElementById(nodeId); return n.length ? n.data('status') : 'GREEN'; }
@@ -350,23 +380,6 @@
         hideDescendants(nodeId);
     }
 
-    function collapseNodeOnly(nodeId) {
-        const node = cy.nodes(`[id="${nodeId}"]`);
-        if (!node.length) return;
-        const childIds = directChildIds(nodeId);
-        collapsedNodes.add(nodeId);
-        node.data('hiddenCount', childIds.size);
-        node.addClass('collapsed');
-        for (const cid of childIds) {
-            const child = cy.nodes(`[id="${cid}"]`);
-            if (!child.length) continue;
-            if (shouldHide(cid, nodeId)) child.addClass('hidden-child');
-            else child.addClass('collapsed-child');
-            cy.edges(`[source="${nodeId}"][target="${cid}"]`).addClass('hidden-edge');
-            cy.edges(`[source="${cid}"][target="${nodeId}"]`).addClass('hidden-edge');
-        }
-    }
-
     function expandNode(nodeId) {
         const node = cy.nodes(`[id="${nodeId}"]`);
         if (!node.length) return;
@@ -424,9 +437,60 @@
 
     function autoHideDeep() {
         computeChildCountMap();
+        const w = window.innerWidth;
+        const maxAutoDepth = w <= 576 ? 2 : w <= 992 ? 3 : 3;
         cy.nodes().forEach(node => {
             const depth = depthMap ? (depthMap[node.id()] || 0) : 0;
-            if (depth >= 3 && (childCountMap[node.id()] || 0) >= 2 && !collapsedNodes.has(node.id())) collapseNode(node.id());
+            if (depth >= maxAutoDepth && (childCountMap[node.id()] || 0) >= 2 && !collapsedNodes.has(node.id())) collapseNode(node.id());
+        });
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       SMART COLLAPSE — depth / threshold / category / problems
+    ═══════════════════════════════════════════════════════════════ */
+    function hideCategory(category) {
+        hiddenCategories.add(category);
+        cy.nodes().forEach(node => {
+            if (node.data('category') === category && !node.data('hasChildren')) {
+                node.addClass('hidden-child');
+                node.connectedEdges().forEach(e => e.addClass('hidden-edge'));
+            }
+        });
+        scheduleSave();
+    }
+
+    function showCategory(category) {
+        hiddenCategories.delete(category);
+        cy.nodes().forEach(node => {
+            if (node.data('category') === category) {
+                node.removeClass('hidden-child');
+                node.connectedEdges().forEach(e => {
+                    const otherId = e.data('source') === node.id() ? e.data('target') : e.data('source');
+                    const other = cy.nodes(`[id="${otherId}"]`);
+                    if (other.length && !other.hasClass('hidden-child')) e.removeClass('hidden-edge');
+                });
+            }
+        });
+        scheduleSave();
+    }
+
+    function showAllCategories() {
+        hiddenCategories.clear();
+        cy.nodes().forEach(node => node.removeClass('hidden-child'));
+        cy.edges().forEach(e => e.removeClass('hidden-edge'));
+        /* Re-apply collapse state */
+        collapsedNodes.forEach(nid => {
+            const node = cy.nodes(`[id="${nid}"]`);
+            if (node.length) { node.addClass('collapsed'); hideDescendants(nid); }
+        });
+        scheduleSave();
+    }
+
+    function detectSharedNodes() {
+        cy.nodes().forEach(node => {
+            if ((node.data('parentCount') || 0) > 1) {
+                node.addClass('shared-node');
+            }
         });
     }
 
@@ -438,7 +502,7 @@
     }
 
     function scheduleSave() {
-        if (suppressSave) return;
+        if (suppressSave || !window.IS_ADMIN) return;
         clearTimeout(saveTimer);
         saveTimer = setTimeout(persistState, 1200);
     }
@@ -451,14 +515,14 @@
             await fetch('/api/dashboard-state', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-                body: JSON.stringify({ zoom: cy.zoom(), pan_x: pan.x, pan_y: pan.y, collapsed: Array.from(collapsedNodes), node_positions: positions, layout_locked: layoutLocked })
+                body: JSON.stringify({ zoom: cy.zoom(), pan_x: pan.x, pan_y: pan.y, collapsed: Array.from(collapsedNodes), node_positions: positions, layout_locked: layoutLocked, hidden_categories: Array.from(hiddenCategories) })
             });
             flashSyncBadge();
         } catch {}
     }
 
     function flashSyncBadge() {
-        const b = $el(cfg.syncBadgeEl);
+        const b = el.syncBadge;
         if (!b) return;
         b.classList.add('show');
         setTimeout(() => b.classList.remove('show'), 2200);
@@ -468,7 +532,8 @@
        LOCK
     ═══════════════════════════════════════════════════════════════ */
     function applyLockState() {
-        const btn = $el(cfg.lockLayoutBtn);
+        if (!window.IS_ADMIN) return;
+        const btn = el.lockLayoutBtn;
         if (!btn) return;
         if (layoutLocked) {
             cy.nodes().ungrabify();
@@ -487,36 +552,71 @@
        PING FLASH
     ═══════════════════════════════════════════════════════════════ */
     function showPingFlash(msg) {
-        const el = $el(cfg.pingFlashEl);
-        if (!el) return;
-        el.innerHTML = msg; el.style.display = 'block';
-        setTimeout(() => { el.style.display = 'none'; }, 6000);
+        const e = el.pingFlash;
+        if (!e) return;
+        e.innerHTML = msg; e.style.display = 'block';
+        setTimeout(() => { e.style.display = 'none'; }, 6000);
     }
 
     /* ═══════════════════════════════════════════════════════════════
        KPI UPDATE
     ═══════════════════════════════════════════════════════════════ */
     function updateKpi(data) {
-        const set = (id, v) => { const el = $el(id); if (el) el.textContent = v; };
-        set(cfg.kpiTotal, data.total || 0);
-        set(cfg.kpiUp,    data.up    || 0);
-        set(cfg.kpiDown,  data.down  || 0);
-        if (cfg.kpiAlerts)    set(cfg.kpiAlerts,    data.down || 0);
-        if (cfg.downDevices)  set(cfg.downDevices,  data.down || 0);
-        if (cfg.categoryContainer) {
+        const set = (e, v) => { if (e) e.textContent = v; };
+        set(el.kpiTotal, data.total || 0);
+        set(el.kpiUp,    data.up    || 0);
+        set(el.kpiDown,  data.down  || 0);
+        if (el.kpiAlerts)    set(el.kpiAlerts,    data.down || 0);
+        if (el.downDevices)  set(el.downDevices,  data.down || 0);
+        if (el.categoryContainer) {
             catCarouselData = (data.categories || []).filter(c => c.total);
-            const cc = $el(cfg.categoryCount);
+            const cc = el.categoryCount;
             if (cc) cc.textContent = catCarouselData.length + ' Types';
             renderCatMarquee();
         }
     }
 
     /* ═══════════════════════════════════════════════════════════════
+       RESPONSIVE: breakpoint detection & debounced resize
+    ═══════════════════════════════════════════════════════════════ */
+    function getBreakpoint() {
+        const w = window.innerWidth;
+        if (w <= 576) return 'xs';
+        if (w <= 768) return 'sm';
+        if (w <= 992) return 'md';
+        if (w <= 1200) return 'lg';
+        return 'xl';
+    }
+
+    let lastBreakpoint = getBreakpoint();
+    let resizeTimer = null;
+
+    function onResize() {
+        const bp = getBreakpoint();
+        if (bp !== lastBreakpoint) {
+            lastBreakpoint = bp;
+            if (cy) {
+                cy.resize();
+                cy.fit(40);
+                autoHideDeep();
+            }
+        } else if (cy) {
+            cy.resize();
+            cy.fit(40);
+        }
+    }
+
+    window.addEventListener('resize', function () {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(onResize, 250);
+    });
+
+    /* ═══════════════════════════════════════════════════════════════
        INIT GRAPH
     ═══════════════════════════════════════════════════════════════ */
     async function initGraph(rawData, savedState) {
-        const cyEl   = $el(cfg.cyContainer);
-        const loadEl = $el(cfg.loadingEl);
+        const cyEl   = el.cy;
+        const loadEl = el.loading;
         if (loadEl) loadEl.style.display = 'none';
         if (cyEl)   cyEl.style.display   = 'block';
         if (cy) { cy.destroy(); cy = null; }
@@ -546,13 +646,32 @@
 
         tagParentNodes();
         buildHierarchyMaps();
-        calculateTopologyStatus();
+        computeAggregationStatus();
         computeDepthMap();
+        detectSharedNodes();
+
+        /* RBAC: disable node dragging for viewers */
+        if (!window.IS_ADMIN) {
+            cy.autoungrabify(true);
+        }
 
         if (savedState && savedState.collapsed && savedState.collapsed.length) {
             savedState.collapsed.forEach(nid => collapseNode(nid));
         } else {
             autoHideDeep();
+        }
+
+        /* Restore hidden categories */
+        if (savedState && savedState.hidden_categories && savedState.hidden_categories.length) {
+            savedState.hidden_categories.forEach(cat => {
+                hiddenCategories.add(cat);
+                cy.nodes().forEach(node => {
+                    if (node.data('category') === cat && !node.data('hasChildren')) {
+                        node.addClass('hidden-child');
+                        node.connectedEdges().forEach(e => e.addClass('hidden-edge'));
+                    }
+                });
+            });
         }
 
         if (savedState && savedState.layout_locked) {
@@ -569,7 +688,7 @@
         }
 
         persistState();
-        const lb = $el(cfg.legendBox);
+        const lb = el.legendBox;
         if (lb) lb.style.display = 'block';
         setupCyEvents(cyEl);
         initMinimap();
@@ -577,6 +696,9 @@
 
     /* ── ELK + Dagre fallback ── */
     async function runELK(animate = false) {
+        const w = window.innerWidth;
+        const nodeSpacing = w <= 576 ? '50' : w <= 992 ? '65' : '80';
+        const layerSpacing = w <= 576 ? '100' : w <= 992 ? '130' : '160';
         try {
             await new Promise((resolve, reject) => {
                 cy.one('layoutstop', resolve);
@@ -586,14 +708,14 @@
                     elk: {
                         'elk.algorithm': 'layered',
                         'elk.direction': 'DOWN',
-                        'elk.spacing.nodeNode': '80',
-                        'elk.layered.spacing.nodeNodeBetweenLayers': '160',
+                        'elk.spacing.nodeNode': nodeSpacing,
+                        'elk.layered.spacing.nodeNodeBetweenLayers': layerSpacing,
                         'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
                         'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
                         'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
                         'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED'
                     },
-                    fit: true, padding: 50,
+                    fit: true, padding: w <= 576 ? 20 : 50,
                     animate, animationDuration: 500
                 }).run();
             });
@@ -617,7 +739,7 @@
     /* ── Minimap ── */
     function initMinimap() {
         if (!cy || navInstance) return;
-        const minimapEl = $el(cfg.minimapEl);
+        const minimapEl = el.minimap;
         if (!minimapEl || typeof cy.navigator !== 'function') return;
         const isDark = cfg.mode === 'fullscreen';
         navInstance = cy.navigator({
@@ -644,9 +766,12 @@
     ═══════════════════════════════════════════════════════════════ */
     function setupCyEvents(cyEl) {
         cy.on('mouseover', 'node', evt => { evt.target.addClass('hovered'); renderTooltip(evt.target); positionTooltip(evt); });
-        cy.on('mouseout',  'node', evt => { evt.target.removeClass('hovered'); const tt = $el(cfg.nodeTooltip); if (tt) tt.style.display = 'none'; });
+        cy.on('mouseout',  'node', evt => { evt.target.removeClass('hovered'); const tt = el.nodeTooltip; if (tt) tt.style.display = 'none'; });
         cy.on('mousemove', 'node', positionTooltip);
-        cy.on('tap', 'node', evt => updateSiteInfoPanel(evt.target.data()));
+        cy.on('tap', 'node', evt => {
+            updateSiteInfoPanel(evt.target.data());
+            cy.animate({ center: { eles: evt.target }, zoom: 1.4 }, { duration: 300 });
+        });
         cy.on('tap', 'edge', evt => openEdgeModal(evt.target.data()));
 
         cyEl.addEventListener('dblclick', e => {
@@ -671,7 +796,7 @@
         });
 
         cy.on('dragfree', 'node', () => scheduleSave());
-        cy.on('viewport',          () => { const tt = $el(cfg.nodeTooltip); if (tt) tt.style.display = 'none'; scheduleSave(); });
+        cy.on('viewport',          () => { const tt = el.nodeTooltip; if (tt) tt.style.display = 'none'; scheduleSave(); });
         cy.on('layoutstop',        () => scheduleSave());
     }
 
@@ -687,7 +812,7 @@
         const childRow = d.hasChildren
             ? `<div class="tt-children"><i class="fas fa-sitemap"></i>${d.childCount} child${d.childCount > 1 ? 'ren' : ''} · dbl-click to ${collapsedNodes.has(d.id) ? 'expand' : 'collapse'}</div>`
             : '';
-        const tt = $el(cfg.nodeTooltip);
+        const tt = el.nodeTooltip;
         if (!tt) return;
         tt.innerHTML =
             `<div class="tt-title"><i class="fas fa-server" style="color:#93c5fd;font-size:13px;"></i>${d.hostname || d.device_name || d.id}</div>` +
@@ -704,7 +829,7 @@
     }
 
     function positionTooltip(evt) {
-        const tt = $el(cfg.nodeTooltip);
+        const tt = el.nodeTooltip;
         if (!tt) return;
         const rect = cy.container().getBoundingClientRect();
         const r    = evt.target.renderedPosition();
@@ -722,7 +847,7 @@
         const isUp = d.status === 'GREEN', isY = d.status === 'YELLOW';
 
         if (cfg.mode === 'fullscreen') {
-            const panel = $el(cfg.alertPanel);
+            const panel = el.alertPanel;
             if (!panel) return;
             const bc = isUp ? '#22c55e' : (isY ? '#f59e0b' : '#ef4444');
             const lb = isUp ? 'ONLINE'  : (isY ? 'PARTIAL'  : 'OFFLINE');
@@ -733,7 +858,7 @@
                 (d.hasChildren ? `<div style="font-size:11px;color:#3b82f6;margin-top:4px;"><i class="fas fa-sitemap me-1"></i>${d.childCount} children (${collapsedNodes.has(d.id) ? 'collapsed' : 'expanded'})</div>` : '');
             setTimeout(() => panel.classList.remove('show'), 5000);
         } else {
-            const panel = $el(cfg.siteInfoPanel);
+            const panel = el.siteInfoPanel;
             if (!panel) return;
             const bc = isUp ? 'badge-soft-success' : (isY ? 'badge-soft-warning' : 'badge-soft-danger');
             const lb = isUp ? 'ONLINE' : (isY ? 'PARTIAL' : 'OFFLINE');
@@ -757,7 +882,7 @@
        EDGE MODAL
     ═══════════════════════════════════════════════════════════════ */
     function openEdgeModal(d) {
-        const title = $el(cfg.modalTitle), body = $el(cfg.modalBody);
+        const title = el.modalTitle, body = el.modalBody;
         if (!title || !body) return;
         const up = d.status === true || d.status === 'true';
         const isDark = cfg.mode === 'fullscreen';
@@ -776,18 +901,17 @@
         showModal();
     }
 
-    function showModal() { const o = $el(cfg.modalOverlay); if (o) o.classList.add('show'); }
-    function hideModal() { const o = $el(cfg.modalOverlay); if (o) o.classList.remove('show'); }
+    function showModal() { const o = el.modalOverlay; if (o) o.classList.add('show'); }
+    function hideModal() { const o = el.modalOverlay; if (o) o.classList.remove('show'); }
 
     /* ═══════════════════════════════════════════════════════════════
        CONTEXT MENU
     ═══════════════════════════════════════════════════════════════ */
     function openCtxMenu(clientX, clientY) {
-        const menu = $el(cfg.ctxMenu);
+        const menu = el.ctxMenu;
         if (!menu) return;
         const nid = ctxNode.id(), d = ctxNode.data();
         const isCollapsed = collapsedNodes.has(nid);
-        const isRoot      = (d.parentCount || 0) === 0 && !d.location;
 
         const upCh = d.upChildren || 0, downCh = d.downChildren || 0;
         let statusLine = '';
@@ -799,12 +923,10 @@
             `<strong>${d.hostname || d.device_name || nid}</strong>` +
             (d.tooltip && d.tooltip !== nid ? `<br><span style="font-size:11px;color:#94a3b8;">${d.tooltip}</span>` : '') +
             statusLine +
-            (d.hiddenCount > 0 ? `<br><span style="font-size:11px;color:#f59e0b;">${d.hiddenCount} devices hidden</span>` : '');
+            (d.hiddenCount > 0 ? `<br><span style="font-size:11px;color:#f59e0b;">${d.hiddenCount} hidden</span>` : '');
 
-        menu.querySelector('#ctxExpand').style.display         = isCollapsed ? 'flex' : 'none';
-        menu.querySelector('#ctxCollapseNode').style.display   = (!isCollapsed && d.hasChildren) ? 'flex' : 'none';
-        menu.querySelector('#ctxCollapseBranch').style.display = (!isCollapsed && d.hasChildren && d.childCount > 1) ? 'flex' : 'none';
-        menu.querySelector('#ctxHideNode').style.display       = isRoot ? 'none' : 'flex';
+        menu.querySelector('#ctxExpand').style.display       = isCollapsed ? 'flex' : 'none';
+        menu.querySelector('#ctxCollapseNode').style.display = (!isCollapsed && d.hasChildren) ? 'flex' : 'none';
 
         menu.style.display = 'block';
         const mw = menu.offsetWidth || 205, mh = menu.offsetHeight || 240;
@@ -812,7 +934,7 @@
         menu.style.top  = (clientY + mh > window.innerHeight ? clientY - mh : clientY) + 'px';
     }
 
-    function closeCtxMenu() { const m = $el(cfg.ctxMenu); if (m) m.style.display = 'none'; }
+    function closeCtxMenu() { const m = el.ctxMenu; if (m) m.style.display = 'none'; }
 
     /* ═══════════════════════════════════════════════════════════════
        ALERTS + CATEGORY MARQUEE (dashboard only)
@@ -821,7 +943,7 @@
         stopAlertTicker();
         alertInterval = setInterval(() => {
             if (alertPaused) return;
-            const panel = $el(cfg.alertList);
+            const panel = el.alertList;
             if (!panel) return;
             const first = panel.firstElementChild;
             if (!first || first.classList.contains('text-muted')) return;
@@ -833,8 +955,8 @@
     function stopAlertTicker() { if (alertInterval) { clearInterval(alertInterval); alertInterval = null; } }
 
     function renderCatMarquee() {
-        const el = $el(cfg.categoryContainer);
-        if (!el || !catCarouselData.length) { if (el) el.innerHTML = ''; return; }
+        const e = el.categoryContainer;
+        if (!e || !catCarouselData.length) { if (e) e.innerHTML = ''; return; }
         const cards = catCarouselData.map(c => {
             const t = c.total || 1, u = c.up || 0, d = c.down || 0;
             const pct = Math.round((u / t) * 100);
@@ -846,7 +968,7 @@
                 <div class="cat-stats"><span class="up"><i class="fas fa-arrow-up"></i> ${u}</span><span class="down"><i class="fas fa-arrow-down"></i> ${d}</span></div>
             </div>`;
         }).join('');
-        el.innerHTML = cards + cards;
+        e.innerHTML = cards + cards;
     }
 
     /* ═══════════════════════════════════════════════════════════════
@@ -866,19 +988,19 @@
         try {
             const alerts = await fetch('/api/alerts').then(r => r.json());
             const count  = alerts.length;
-            const ac = $el(cfg.alertCount); if (ac) ac.textContent = count;
-            const aa = $el(cfg.activeAlerts); if (aa) aa.textContent = count;
+            const ac = el.alertCount; if (ac) ac.textContent = count;
+            const aa = el.activeAlerts; if (aa) aa.textContent = count;
 
             if (cfg.mode === 'fullscreen') {
                 /* fullscreen: simple list in alert panel */
-                const list = $el(cfg.alertList);
+                const list = el.alertList;
                 if (!list) return;
                 list.innerHTML = count
                     ? alerts.map(a => `<div class="alert-item"><i class="fas fa-bell me-1"></i><strong>${a.label}</strong><br><span style="color:#94a3b8;">${a.ip}${a.location ? ' · ' + a.location : ''}</span></div>`).join('')
                     : '<div style="color:#64748b;padding:4px;"><i class="fas fa-check-circle" style="color:#22c55e;"></i> No active alerts</div>';
             } else {
                 /* dashboard: ticker */
-                const list = $el(cfg.alertList);
+                const list = el.alertList;
                 if (!list) return;
                 if (count) {
                     list.innerHTML = alerts.map(a => `<div class="alert-item"><i class="fas fa-bell me-1"></i><strong>${a.label}</strong><br><span style="color:#64748b;">${a.ip}${a.location ? ' · ' + a.location : ''}</span></div>`).join('');
@@ -899,9 +1021,9 @@
     }
 
     function updateLastPoll() {
-        const el = $el(cfg.lastPoll);
-        if (!el) return;
-        el.textContent = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const e = el.lastPoll;
+        if (!e) return;
+        e.textContent = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     }
 
     /* ═══════════════════════════════════════════════════════════════
@@ -921,14 +1043,15 @@
        BIND TOOLBAR BUTTONS
     ═══════════════════════════════════════════════════════════════ */
     function bindButtons() {
-        const on = (sel, fn) => { const el = $el(sel); if (el) el.addEventListener('click', fn); };
+        const on = (e, fn) => { if (e) e.addEventListener('click', fn); };
 
-        on(cfg.fitBtn,         () => { cy?.fit(40); scheduleSave(); });
-        on(cfg.expandAllBtn,   () => expandAll());
-        on(cfg.collapseAllBtn, () => collapseAll());
-        on(cfg.lockLayoutBtn,  () => { if (!cy) return; layoutLocked = !layoutLocked; applyLockState(); persistState(); });
+        on(el.fitBtn,         () => { cy?.fit(40); scheduleSave(); });
+        on(el.expandAllBtn,   () => expandAll());
+        on(el.collapseAllBtn, () => collapseAll());
+        on(el.lockLayoutBtn,  () => { if (!window.IS_ADMIN || !cy) return; layoutLocked = !layoutLocked; applyLockState(); persistState(); });
 
-        on(cfg.resetLayoutBtn, async () => {
+        on(el.resetLayoutBtn, async () => {
+            if (!window.IS_ADMIN) return;
             if (layoutLocked) { alert('Layout is locked. Unlock before Auto Adjust.'); return; }
             if (!cy) return;
             suppressSave = true;
@@ -942,8 +1065,8 @@
             } finally { suppressSave = false; }
         });
 
-        on(cfg.pingBtn, async function () {
-            const btn = $el(cfg.pingBtn);
+        on(el.pingBtn, async function () {
+            const btn = el.pingBtn;
             btn.disabled = true;
             btn.innerHTML = cfg.mode === 'fullscreen'
                 ? '<span class="spinner" style="width:12px;height:12px;border-width:2px;"></span> Pinging…'
@@ -970,13 +1093,54 @@
             }
         });
 
-        on(cfg.refreshBtn, () => reloadTopology());
+        on(el.refreshBtn, () => reloadTopology());
 
         /* fullscreen-only */
-        on(cfg.exitBtn, () => { window.close(); if (window.opener) window.close(); else window.location.href = '/dashboard'; });
+        on(el.exitBtn, () => { window.close(); if (window.opener) window.close(); else window.location.href = '/dashboard'; });
+
+        /* category hide menu — dynamically populated */
+        const catMenu = el.categoryMenu;
+        if (catMenu) {
+            const populateCategories = () => {
+                if (catMenu.dataset.populated) return;
+                const cats = new Map();
+                cy.nodes().forEach(n => { const c = n.data('category'); if (c) cats.set(c, (cats.get(c) || 0) + 1); });
+                if (!cats.size) return;
+                const sorted = [...cats.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+                let html = sorted.map(([c, count]) =>
+                    `<label class="dropdown-item d-flex align-items-center gap-2" style="font-size:12px;cursor:pointer;">
+                        <input type="checkbox" class="cat-toggle me-1" value="${c}" checked> ${c}
+                        <span class="badge bg-secondary ms-auto" style="font-size:10px;">${count}</span>
+                    </label>`
+                ).join('');
+                html += `<div class="dropdown-divider my-1"></div>`;
+                html += `<div class="d-flex gap-1 px-2">
+                    <button type="button" class="btn btn-sm btn-outline-light flex-fill cat-select-all" style="font-size:11px;padding:2px 6px;">All</button>
+                    <button type="button" class="btn btn-sm btn-outline-warning flex-fill cat-clear-all" style="font-size:11px;padding:2px 6px;">None</button>
+                </div>`;
+                catMenu.innerHTML = html;
+                catMenu.querySelectorAll('.cat-toggle').forEach(cb => {
+                    cb.addEventListener('change', function () {
+                        if (this.checked) showCategory(this.value);
+                        else hideCategory(this.value);
+                    });
+                });
+                catMenu.querySelector('.cat-select-all')?.addEventListener('click', () => {
+                    catMenu.querySelectorAll('.cat-toggle').forEach(cb => { cb.checked = true; });
+                    showAllCategories();
+                });
+                catMenu.querySelector('.cat-clear-all')?.addEventListener('click', () => {
+                    catMenu.querySelectorAll('.cat-toggle').forEach(cb => { cb.checked = false; });
+                    const catsArr = [...cats.keys()];
+                    catsArr.forEach(c => hideCategory(c));
+                });
+                catMenu.dataset.populated = '1';
+            };
+            catMenu.addEventListener('show.bs.dropdown', populateCategories);
+        }
 
         /* search */
-        const si = $el(cfg.searchInput);
+        const si = el.searchInput;
         if (si) si.addEventListener('keyup', e => {
             if (e.key !== 'Enter' || !cy) return;
             const term = e.target.value.toLowerCase().trim();
@@ -1000,59 +1164,72 @@
                 cy.animate({ center: { eles: found[0] }, zoom: 2.4 }, { duration: 500 });
                 found[0].addClass('hovered');
                 setTimeout(() => found[0].removeClass('hovered'), 2200);
-            } else if (cfg.siteInfoPanel) {
-                const sp = $el(cfg.siteInfoPanel);
+            } else if (el.siteInfoPanel) {
+                const sp = el.siteInfoPanel;
                 if (sp) { sp.innerHTML = `<i class="fas fa-search-minus text-muted"></i> No match for "<em>${term}</em>"`; setTimeout(() => { sp.innerHTML = '<i class="fas fa-info-circle me-1"></i> Click any node to see details'; }, 2000); }
             }
         });
 
         /* legend toggle */
-        const lt = $el(cfg.legendToggle);
+        const lt = el.legendToggle;
         if (lt) lt.addEventListener('click', () => {
-            const lb = $el(cfg.legendBox), li = $el(cfg.legendIcon);
+            const lb = el.legendBox, li = el.legendIcon;
             if (!lb) return;
             lb.classList.toggle('collapsed');
             if (li) li.className = lb.classList.contains('collapsed') ? 'fas fa-chevron-right ms-auto' : 'fas fa-chevron-down ms-auto';
         });
 
         /* context menu items */
-        const ctx = $el(cfg.ctxMenu);
+        const ctx = el.ctxMenu;
         if (ctx) {
-            ctx.querySelector('#ctxOpenHTTP')?.addEventListener('click',  () => { if (!ctxNode) return; closeCtxMenu(); window.open('http://'  + ctxNode.id(), '_blank'); });
-            ctx.querySelector('#ctxOpenHTTPS')?.addEventListener('click', () => { if (!ctxNode) return; closeCtxMenu(); window.open('https://' + ctxNode.id(), '_blank'); });
+            ctx.querySelector('#ctxOpenHTTP')?.addEventListener('click', () => {
+                if (!ctxNode) return; closeCtxMenu();
+                window.open('http://' + ctxNode.id(), '_blank', 'noopener,noreferrer');
+            });
+            ctx.querySelector('#ctxOpenHTTPS')?.addEventListener('click', () => {
+                if (!ctxNode) return; closeCtxMenu();
+                window.open('https://' + ctxNode.id(), '_blank', 'noopener,noreferrer');
+            });
             ctx.querySelector('#ctxPing')?.addEventListener('click', () => {
                 if (!ctxNode) return; const ip = ctxNode.id(); closeCtxMenu();
                 fetch('/api/ping/' + ip).catch(() => {});
                 showPingFlash(`<i class="fas fa-satellite-dish"></i> Pinging ${ip}…`);
             });
-            ctx.querySelector('#ctxExpand')?.addEventListener('click',         () => { if (!ctxNode) return; expandNode(ctxNode.id()); closeCtxMenu(); cy.animate({ fit: { eles: cy.elements(':visible'), padding: 40 } }, { duration: 380 }); scheduleSave(); });
-            ctx.querySelector('#ctxCollapseNode')?.addEventListener('click',   () => { if (!ctxNode) return; collapseNodeOnly(ctxNode.id()); closeCtxMenu(); cy.animate({ fit: { eles: cy.elements(':visible'), padding: 40 } }, { duration: 380 }); scheduleSave(); });
-            ctx.querySelector('#ctxCollapseBranch')?.addEventListener('click', () => { if (!ctxNode) return; collapseNode(ctxNode.id()); closeCtxMenu(); cy.animate({ fit: { eles: cy.elements(':visible'), padding: 40 } }, { duration: 380 }); scheduleSave(); });
-            ctx.querySelector('#ctxHideNode')?.addEventListener('click', () => {
-                if (!ctxNode) return;
-                ctxNode.addClass('hidden-child');
-                ctxNode.connectedEdges().addClass('hidden-edge');
-                closeCtxMenu(); scheduleSave();
+            ctx.querySelector('#ctxExpand')?.addEventListener('click', () => {
+                if (!ctxNode) return; expandNode(ctxNode.id()); closeCtxMenu();
+                cy.animate({ fit: { eles: cy.elements(':visible'), padding: 40 } }, { duration: 380 }); scheduleSave();
             });
-            ctx.querySelector('#ctxFocusNode')?.addEventListener('click', () => { if (!ctxNode) return; closeCtxMenu(); cy.animate({ center: { eles: ctxNode }, zoom: 1.4 }, { duration: 400 }); });
+            ctx.querySelector('#ctxCollapseNode')?.addEventListener('click', () => {
+                if (!ctxNode) return; collapseNode(ctxNode.id()); closeCtxMenu();
+                cy.animate({ fit: { eles: cy.elements(':visible'), padding: 40 } }, { duration: 380 }); scheduleSave();
+            });
             ctx.querySelector('#ctxDetails')?.addEventListener('click', () => {
                 if (!ctxNode) return; closeCtxMenu();
-                const d = ctxNode.data(), t = $el(cfg.modalTitle), b = $el(cfg.modalBody);
+                const d = ctxNode.data(), t = el.modalTitle, b = el.modalBody;
                 if (!t || !b) return;
                 const isDark = cfg.mode === 'fullscreen';
+                const fields = [
+                    ['Hostname', d.hostname || d.device_name],
+                    ['IP', d.id || d.ip],
+                    ['Status', d.status],
+                    ['Category', d.category],
+                    ['Location', d.location],
+                    ['Children', d.hasChildren ? (d.childCount || '?') + ' total' : '—'],
+                    ['Up', d.upChildren ? d.upChildren + '' : '—'],
+                    ['Down', d.downChildren ? d.downChildren + '' : '—'],
+                ];
                 t.innerHTML = `<i class="fas fa-server me-2" style="color:#3b82f6;"></i>${d.hostname || d.device_name || d.id}`;
                 b.innerHTML = `<table style="width:100%;font-size:13px;border-collapse:collapse;">` +
-                    Object.entries(d).filter(([, v]) => v !== undefined && v !== null && v !== '')
+                    fields.filter(([, v]) => v && v !== '—')
                     .map(([k, v]) => `<tr><th style="width:35%;color:${isDark ? '#94a3b8' : '#64748b'};font-weight:600;text-align:left;padding:4px 0;">${k}</th><td style="color:${isDark ? '#e2e8f0' : 'inherit'};">${v}</td></tr>`).join('') +
                     `</table>`;
                 showModal();
             });
-            ctx.querySelector('#ctxDevicePage')?.addEventListener('click', () => { if (!ctxNode) return; closeCtxMenu(); window.open('/device/' + ctxNode.id(), '_blank'); });
         }
 
         /* modal close */
-        on(cfg.modalClose, hideModal);
-        const mo = $el(cfg.modalOverlay);
+        on(el.modalClose, hideModal);
+        const mo = el.modalOverlay;
         if (mo) mo.addEventListener('click', e => { if (e.target === mo) hideModal(); });
 
         /* close ctx on outside click */
@@ -1060,7 +1237,7 @@
         document.addEventListener('contextmenu', e => { if (!e.target.closest(cfg.cyContainer)) closeCtxMenu(); });
 
         /* alert ticker pause on hover */
-        const al = $el(cfg.alertList);
+        const al = el.alertList;
         if (al) { al.addEventListener('mouseenter', () => { alertPaused = true; }); al.addEventListener('mouseleave', () => { alertPaused = false; }); }
     }
 
@@ -1069,8 +1246,8 @@
     ═══════════════════════════════════════════════════════════════ */
     function reloadTopology() {
         if (cy) { cy.destroy(); cy = null; }
-        const cyEl   = $el(cfg.cyContainer);
-        const loadEl = $el(cfg.loadingEl);
+        const cyEl   = el.cy;
+        const loadEl = el.loading;
         if (cyEl)   cyEl.style.display   = 'none';
         if (loadEl) loadEl.style.display = cfg.mode === 'fullscreen' ? 'flex' : 'flex';
         loadGraph(); loadAlerts(); loadDevices();
@@ -1110,8 +1287,20 @@
                 (state.collapsed || []).forEach(id => collapsedNodes.add(id));
                 cy.nodes().forEach(n => n.removeClass('collapsed hidden-child collapsed-child'));
                 cy.edges().forEach(e => e.removeClass('hidden-edge'));
-                tagParentNodes(); buildHierarchyMaps(); calculateTopologyStatus(); computeDepthMap();
+                tagParentNodes(); buildHierarchyMaps(); computeAggregationStatus(); computeDepthMap(); detectSharedNodes();
                 collapsedNodes.forEach(nid => { const node = cy.nodes(`[id="${nid}"]`); if (node.length) { node.addClass('collapsed'); hideDescendants(nid); } });
+
+                /* Restore hidden categories */
+                /* Restore hidden categories */
+                hiddenCategories.clear();
+                (state.hidden_categories || []).forEach(cat => hiddenCategories.add(cat));
+                cy.nodes().forEach(node => {
+                    const cat = node.data('category');
+                    if (cat && hiddenCategories.has(cat) && !node.data('hasChildren')) {
+                        node.addClass('hidden-child');
+                        node.connectedEdges().forEach(e => e.addClass('hidden-edge'));
+                    }
+                });
                 /* sync viewport only if not drifted */
                 if (cfg.mode === 'dashboard') {
                     const cp = cy.pan(), cz = cy.zoom();
@@ -1130,6 +1319,56 @@
     ═══════════════════════════════════════════════════════════════ */
     window.initTopology = function (config) {
         cfg = config;
+
+        /* Resolve all element references once — no repeated querySelector calls */
+        const map = {
+            cy:           cfg.cyContainer,
+            loading:      cfg.loadingEl,
+            pingFlash:    cfg.pingFlashEl,
+            syncBadge:    cfg.syncBadgeEl,
+            fitBtn:       cfg.fitBtn,
+            expandAllBtn: cfg.expandAllBtn,
+            collapseAllBtn: cfg.collapseAllBtn,
+            resetLayoutBtn: cfg.resetLayoutBtn,
+            lockLayoutBtn: cfg.lockLayoutBtn,
+            pingBtn:      cfg.pingBtn,
+            refreshBtn:   cfg.refreshBtn,
+            searchInput:  cfg.searchInput,
+            legendBox:    cfg.legendBox,
+            legendToggle: cfg.legendToggle,
+            legendIcon:   cfg.legendIcon,
+            nodeTooltip:  cfg.nodeTooltip,
+            ctxMenu:      cfg.ctxMenu,
+            modalOverlay: cfg.modalOverlay,
+            modalTitle:   cfg.modalTitle,
+            modalBody:    cfg.modalBody,
+            modalClose:   cfg.modalClose,
+            minimap:      cfg.minimapEl,
+            kpiTotal:     cfg.kpiTotal,
+            kpiUp:        cfg.kpiUp,
+            kpiDown:      cfg.kpiDown,
+            kpiAlerts:    cfg.kpiAlerts,
+            downDevices:  cfg.downDevices,
+            activeAlerts: cfg.activeAlerts,
+            lastPoll:     cfg.lastPoll,
+            alertList:    cfg.alertList,
+            alertCount:   cfg.alertCount,
+            categoryContainer: cfg.categoryContainer,
+            categoryCount: cfg.categoryCount,
+            siteInfoPanel: cfg.siteInfoPanel,
+            alertPanel:   cfg.alertPanel,
+            exitBtn:      cfg.exitBtn,
+            categoryMenu:    cfg.categoryMenu,
+            sharedLegend:    cfg.sharedLegend,
+        };
+        for (const [key, sel] of Object.entries(map)) {
+            el[key] = $el(sel);
+        }
+
+        /* RBAC: hide admin-only buttons for viewers */
+        if (!window.IS_ADMIN) {
+            [el.lockLayoutBtn, el.resetLayoutBtn].forEach(e => { if (e) e.style.display = 'none'; });
+        }
 
         bindButtons();
         initSocket();
